@@ -146,11 +146,63 @@ export async function callHost(endpoint, payload, signal) {
 }
 
 /**
+ * What the page resolves the editor's font to.
+ *
+ * A font that ends up serif is the hardest kind of report to act on from the outside:
+ * the CSS says the right token, the token says the right family, and the glyphs are
+ * still 宋体 because Chromium fell back to its *standard* font for Chinese. Recording
+ * the resolved stack and the token values lets that be read from the host log instead
+ * of guessed at.
+ * @returns a JSON-safe font report, or `undefined` when it cannot be measured.
+ */
+function fontDiagnostics() {
+  try {
+    const doc = globalThis.document;
+    if (doc === undefined || doc.body === null) return undefined;
+    const live = doc.querySelector('.dsh-mk-surface');
+    let host = live;
+    let probe;
+    if (host === null) {
+      const root = doc.createElement('div');
+      root.className = 'dsh-mk-root';
+      probe = doc.createElement('div');
+      probe.className = 'dsh-mk-surface';
+      probe.textContent = '字体 Test 123';
+      root.style.position = 'absolute';
+      root.style.visibility = 'hidden';
+      root.append(probe);
+      doc.body.append(root);
+      host = probe;
+    }
+    const computed = getComputedStyle(host);
+    const bodyStyle = getComputedStyle(doc.body);
+    const report = {
+      fontFamily: computed.fontFamily,
+      fontSize: computed.fontSize,
+      fontWeight: computed.fontWeight,
+      bodyFontFamily: bodyStyle.fontFamily,
+      tokens: {
+        fontFamily: bodyStyle.getPropertyValue('--dsw-font-family').trim(),
+        markdownBaseFamily: bodyStyle.getPropertyValue('--dsw-font-markdown-base-font-family').trim(),
+        markdownBaseSize: bodyStyle.getPropertyValue('--dsw-font-markdown-base-font-size').trim(),
+        markdownH1Size: bodyStyle.getPropertyValue('--dsw-font-markdown-h1-font-size').trim(),
+        codeFamily: bodyStyle.getPropertyValue('--ds-font-family-code').trim(),
+      },
+    };
+    probe?.parentElement?.remove();
+    return report;
+  } catch (error) {
+    return { error: String(error?.message ?? error) };
+  }
+}
+
+/**
  * Report this half's registration facts to the host log.
  *
  * Diagnostic only, and every step is guarded: a plugin must never fail its own
  * registration over telemetry. The ranking is included because "which entry is the
- * default view" is decided by ranking and nothing else.
+ * default view" is decided by ranking and nothing else; the font block because a
+ * wrong-looking document is otherwise unattributable.
  * @param ctx - client plugin context.
  */
 async function reportToHost(ctx) {
@@ -161,7 +213,12 @@ async function reportToHost(ctx) {
     ranking = [String(error)];
   }
   try {
-    await callHost('report', { implementation: IMPL_ID, ranking, reportedAt: new Date().toISOString() });
+    await callHost('report', {
+      implementation: IMPL_ID,
+      ranking,
+      font: fontDiagnostics(),
+      reportedAt: new Date().toISOString(),
+    });
   } catch {
     /* the host half may not be mounted yet; the report is not load-bearing */
   }

@@ -40,7 +40,9 @@ const VARIABLES = `
     --dsh-mk-error: var(--dsw-alias-state-error-primary, #cf222e);
     --dsh-mk-warn: var(--dsw-alias-state-warn-secondary, #9a6700);
     --dsh-mk-mono: var(--ds-font-family-code, var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
-    --dsh-mk-body-font: var(--dsw-font-markdown-base, 400 14px/1.72 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    /* The app's own family first, then CJK sans faces by name: an app stack of
+       Latin-only faces makes Chromium resolve Chinese through its standard serif. */
+    --dsh-mk-font-stack: var(--dsw-font-family, "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", -apple-system, "Segoe UI", sans-serif), "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   }
 `;
 
@@ -77,25 +79,68 @@ const STRUCTURAL = `
  *
  * A transcription of the shipped `._markdown_*` rules — same tokens, same margins,
  * same table paddings — so an editable document looks like the read-only one it
- * replaces. Literal fallbacks exist only for a page without the theme.
+ * replaces.
+ *
+ * Two deliberate departures from the shipped file, both learned from a real report
+ * that the editor rendered in a serif face while the app was sans:
+ *
+ *  1. **longhands, not the `font:` shorthand.** The theme publishes granular tokens
+ *     (`--dsw-font-markdown-base-font-family` / `-size` / `-line-height` /
+ *     `-font-weight`). A shorthand whose token is missing is invalid as a whole and
+ *     silently falls back to inherited/browser defaults; a longhand that is missing
+ *     only loses that one property.
+ *  2. **a CJK sans fallback after the app family.** If the app's family list has no
+ *     CJK face (Inter/Segoe UI do not), Chinese glyphs resolve through the browser's
+ *     *standard* font — which is a serif (Times New Roman / 宋体) in Chromium. Naming
+ *     the CJK faces explicitly is what keeps a Chinese document sans.
  */
 const TYPOGRAPHY = `
   .dsh-mk-surface {
     min-width: 0;
     overflow-wrap: anywhere;
-    font: var(--dsh-mk-body-font);
+    font-family: var(--dsh-mk-font-stack);
+    font-size: var(--dsw-font-markdown-base-font-size, 14px);
+    font-weight: var(--dsw-font-markdown-base-font-weight, 400);
+    line-height: var(--dsw-font-markdown-base-line-height, 1.72);
     color: var(--dsh-mk-text);
     -webkit-font-smoothing: antialiased;
   }
   .dsh-mk-surface ::selection { background: var(--dsh-mk-selection); }
   .dsh-mk-surface strong { font-weight: 600; }
 
-  .dsh-mk-surface h1 { font: var(--dsw-font-markdown-h1, 600 22px/1.35 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 32px 0 16px; }
-  .dsh-mk-surface h2 { font: var(--dsw-font-markdown-h2, 600 18px/1.4 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 32px 0 16px; }
-  .dsh-mk-surface h3 { font: var(--dsw-font-markdown-h3, 600 16px/1.45 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 32px 0 16px; }
-  .dsh-mk-surface h4 { font: var(--dsw-font-markdown-h4, 600 15px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 16px 0; }
+  .dsh-mk-surface h1 {
+    font-family: var(--dsw-font-markdown-h1-font-family, var(--dsh-mk-font-stack));
+    font-size: var(--dsw-font-markdown-h1-font-size, 22px);
+    font-weight: var(--dsw-font-markdown-h1-font-weight, 600);
+    line-height: var(--dsw-font-markdown-h1-line-height, 1.35);
+    margin: 32px 0 16px;
+  }
+  .dsh-mk-surface h2 {
+    font-family: var(--dsw-font-markdown-h2-font-family, var(--dsh-mk-font-stack));
+    font-size: var(--dsw-font-markdown-h2-font-size, 18px);
+    font-weight: var(--dsw-font-markdown-h2-font-weight, 600);
+    line-height: var(--dsw-font-markdown-h2-line-height, 1.4);
+    margin: 32px 0 16px;
+  }
+  .dsh-mk-surface h3 {
+    font-family: var(--dsw-font-markdown-h3-font-family, var(--dsh-mk-font-stack));
+    font-size: var(--dsw-font-markdown-h3-font-size, 16px);
+    font-weight: var(--dsw-font-markdown-h3-font-weight, 600);
+    line-height: var(--dsw-font-markdown-h3-line-height, 1.45);
+    margin: 32px 0 16px;
+  }
+  .dsh-mk-surface h4 {
+    font-family: var(--dsw-font-markdown-h4-font-family, var(--dsh-mk-font-stack));
+    font-size: var(--dsw-font-markdown-h4-font-size, 15px);
+    font-weight: var(--dsw-font-markdown-h4-font-weight, 600);
+    line-height: var(--dsw-font-markdown-h4-line-height, 1.5);
+    margin: 16px 0;
+  }
   .dsh-mk-surface :where(h5, h6) {
-    font: var(--dsw-font-markdown-base-strong, 600 14px/1.72 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    font-family: var(--dsw-font-markdown-base-font-family, var(--dsh-mk-font-stack));
+    font-size: var(--dsw-font-markdown-base-font-size, 14px);
+    font-weight: 600;
+    line-height: var(--dsw-font-markdown-base-line-height, 1.72);
     margin: 16px 0;
   }
   .dsh-mk-surface :where(h1, h2, h3, h4, h5, h6) strong { font-weight: inherit; }
@@ -136,16 +181,18 @@ const TYPOGRAPHY = `
   .dsh-mk-surface pre {
     margin: 16px 0; padding: 12px 14px; overflow: auto;
     background: var(--dsh-mk-layer); border-radius: var(--dsw-radius-md, 8px);
-    font: var(--dsw-font-markdown-code-block, 400 12px/1.6 var(--dsh-mk-mono));
-    font-family: var(--dsh-mk-mono);
+    font-family: var(--dsw-font-markdown-code-font-family, var(--dsh-mk-mono));
     font-size: 0.86em;
+    font-weight: 400;
+    line-height: 1.6;
   }
   .dsh-mk-surface pre code { padding: 0; border: none; background: none; font: inherit; }
 
   .dsh-mk-surface :not(pre) > code {
-    font: var(--dsw-font-markdown-code, 400 0.875em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-    font-family: var(--ds-font-family-code, var(--dsh-mk-mono));
+    font-family: var(--dsw-font-markdown-code-font-family, var(--ds-font-family-code, var(--dsh-mk-mono)));
     font-size: 0.875em;
+    font-weight: 400;
+    line-height: 1.5;
     background-color: var(--dsw-alias-markdown-inline-code, var(--dsh-mk-layer));
     border: 0.5px solid var(--dsw-alias-border-l1, var(--dsh-mk-border));
     border-radius: var(--dsw-radius-sm, 4px);
@@ -163,13 +210,19 @@ const TYPOGRAPHY = `
   .dsh-mk-surface th {
     text-align: start; padding: 10px 16px;
     border-bottom: 0.5px solid var(--dsw-alias-border-l3, var(--dsh-mk-rule));
-    font: var(--dsw-font-markdown-table-head, 600 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    font-family: var(--dsw-font-markdown-table-head-font-family, var(--dsh-mk-font-stack));
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
     min-width: 100px;
   }
   .dsh-mk-surface td {
     padding: 10px 16px;
     border-bottom: 0.5px solid var(--dsh-mk-rule);
-    font: var(--dsw-font-markdown-table, 400 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    font-family: var(--dsw-font-markdown-table-font-family, var(--dsh-mk-font-stack));
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.5;
     min-width: 100px;
   }
   .dsh-mk-surface th:first-child, .dsh-mk-surface td:first-child { padding-left: 0; }

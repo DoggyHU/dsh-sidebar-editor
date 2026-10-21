@@ -1,6 +1,6 @@
 {
   "name": "dsh-sidebar-milkdown",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "给 DSH 官方右侧栏文档预览增加一个基于 ProseMirror（Milkdown）的 Markdown 渲染式编辑器：一个文档模型、一个视图，输入法与跨段落选区由编辑器自己保证。",
@@ -50,4 +50,5 @@
   },
   "license": "MIT"
 }
+
 

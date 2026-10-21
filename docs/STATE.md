@@ -11,7 +11,7 @@
 | 版本 | 0.2.0 |
 | 产物 | `lib/client.js` 1066.6 KB（130 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3（含 `@milkdown/core`、`preset-commonmark`、`preset-gfm`、`plugin/history`、`plugin/listener`、`prose/*`） |
-| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 89 项，全绿；行为套件连跑 3 次稳定 |
+| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 103 项，全绿；行为套件连跑 3 次稳定 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`，`dsh-sidebar-editor` **已从 bundles 移除**（依赖项保留，恢复只需一行） |
 
 ### 0.2.0 改了什么（用户四条反馈）
@@ -23,6 +23,8 @@
 | 3 | 表格没有＋行/＋列 | 加「＋行 / ＋列」浮层按钮（光标在表格内或悬停表格时出现在右上角）；不抢焦点 |
 | 4 | 字体不跟随 DSH 设置 | 排版整段照抄官方 `._markdown_*` 规则，用 `--dsw-font-markdown-*` 令牌，改设置时一起变 |
 | 5 | 保存后文档跳回最上面 | 两处：`replaceBody` 原来把光标钉在文档开头（PM 会把光标滚进视口）→ 改成保持原光标附近；另外用**模块级 `scrollPositions`** 记住每个文件的阅读位置，重建/替换后还原 |
+| 6 | 存过五版之后，切到对话框再保存就报「磁盘已变更」 | 一次手势会同时触发多个保存点（点聊天框 = pointerdown + blur），两次写带着同一个版本号 → 后一次必然冲突。改成**串行队列**（`saveChainRef`），并且冲突回包里如果磁盘字节**正好等于我们这次要写的内容**，就当作成功（stale token，不是真冲突） |
+| 7 | 字体是衬线体 | 0.2.0 用 `font:` 简写 + 令牌，令牌缺一个就整条失效；而且 DSH 的 `--dsw-font-family` 可能只有拉丁字体，中文就落到 Chromium 的**标准字体**（= 宋体）。改成**长写属性** + `--dsh-mk-font-stack`（app family 后面显式追加 `"Microsoft YaHei" / "PingFang SC" / "Noto Sans CJK SC"`），并在客户端上报里记下解析后的 `fontFamily` 与令牌值，写到 `%TEMP%\dsh-sidebar-milkdown-report.json` |
 
 ---
 
@@ -100,7 +102,37 @@ const COMMONMARK = commonmark.filter((p) => !EMPTY_LINE_PLUGINS.has(p));
 
 代价：空段落在保存后消失（它本来就没有 Markdown 表示）。
 
-### 3.6 回车语义
+### 3.7 一次手势 = 多个保存点
+
+点聊天框会同时产生 `pointerdown`（我们的 document 捕获监听）和 `blur`（Milkdown 的 listener）。
+两个保存点若并行发出，第二次携带的还是第一次之前的版本号 → host 判 `FS_STALE_VERSION` → 界面报
+「磁盘已变更」，而磁盘上的内容其实已经是自己刚写的那版。
+
+两道防线：
+
+1. `saveChainRef`：保存串行排队（`saveChainRef.current.then(...)`），第二次一定在第一次提交完之后跑，
+   此时 `docRef.version` 已更新；
+2. 冲突自愈：`conflict` 回包里 `current.text` 若与"这次本来要写的内容"逐字节相同，就当作成功
+   （换用 `current.version`），不报冲突、不暂停。
+
+真正的冲突（磁盘真的是别人改的）照旧停止并给「覆盖磁盘 / 重新加载」。
+
+### 3.8 字体：长写属性 + 显式 CJK 兜底
+
+两件事叠在一起才会变成"衬线体"：
+
+1. `font: var(--token)` 是**简写**：令牌缺失时整条声明失效，回退到继承/浏览器默认；
+2. `--dsw-font-family` 若只有拉丁字体，中文没有字形，Chromium 用**标准字体**兜底，而标准字体是衬线（宋体）。
+
+所以 `.dsh-mk-surface` 用长写属性（`font-family` / `font-size` / `font-weight` / `line-height`，
+分别对应主题的 `--dsw-font-markdown-base-font-*`），且 `--dsh-mk-font-stack` 在 app family 之后显式追加
+`"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif`。app 自己的 family 里有 CJK 时它优先，
+所以"跟随设置"没有被破坏。
+
+排查手段：客户端把解析后的 `fontFamily` 和主题令牌值写进上报，落盘在
+`%TEMP%\dsh-sidebar-milkdown-report.json` 的 `font` 字段——真机再出现"看着不对"，读这个文件即可，不用猜。
+
+### 3.9 回车语义
 
 | 位置 | 行为 | 实现 |
 |---|---|---|

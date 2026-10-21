@@ -80,6 +80,8 @@ export function MilkdownBody(props) {
   /** True while the disk version is unknown (after a conflict or a failed save). */
   const pausedRef = useRef(false);
   const saveRef = useRef(undefined);
+  /** Serialises writes: one gesture can arm several save points at once. */
+  const saveChainRef = useRef(Promise.resolve());
   /** The owner revision this body has already reconciled. */
   const loadedRevisionRef = useRef(undefined);
   /** True while an IME composition owns the buffer. */
@@ -101,7 +103,7 @@ export function MilkdownBody(props) {
    * Write the buffer, unless it is already what the disk holds.
    * @param force - true skips the version guard (the user chose "overwrite").
    */
-  const save = useCallback(
+  const runSave = useCallback(
     async (force) => {
       const editor = editorRef.current;
       const held = docRef.current;
@@ -138,12 +140,29 @@ export function MilkdownBody(props) {
           setState('saved');
           return;
         }
-        pausedRef.current = true;
         if (result?.code === 'conflict') {
+          // A stale token is not always someone else's edit: the same write can have
+          // landed already (a queued save, or the owner's reload raising the version
+          // first). If the disk holds exactly what we were about to write, this is
+          // success — reporting a conflict there is what refused to save a document
+          // whose newest bytes were already on disk.
+          const diskText = result.current?.text;
+          if (typeof diskText === 'string' && diskText === joinFrontmatter(frontRef.current, body)) {
+            baselineRef.current = body;
+            const next = { ...held, version: result.current?.version ?? held.version };
+            docRef.current = next;
+            setDoc(next);
+            pausedRef.current = false;
+            setNotice(undefined);
+            setState('saved');
+            return;
+          }
+          pausedRef.current = true;
           setState('conflict');
           setNotice({ kind: 'conflict', current: result.current });
           return;
         }
+        pausedRef.current = true;
         setState('error');
         // Keep the host's own message: a mapped code alone turns a precise
         // filesystem refusal into "something failed".
@@ -155,6 +174,26 @@ export function MilkdownBody(props) {
       }
     },
     [address, call],
+  );
+
+  /**
+   * Queue a write behind any write already in flight.
+   *
+   * One gesture can trigger several save points at once — clicking into the chat box
+   * is a `pointerdown` outside the editor *and* a blur — and two writes carrying the
+   * same version token mean the second one conflicts with the first. Serialising them
+   * turns that into "the second call finds nothing left to write".
+   */
+  const save = useCallback(
+    (force) => {
+      const queued = saveChainRef.current.then(
+        () => runSave(force),
+        () => runSave(force),
+      );
+      saveChainRef.current = queued.catch(() => {});
+      return queued;
+    },
+    [runSave],
   );
   saveRef.current = save;
 

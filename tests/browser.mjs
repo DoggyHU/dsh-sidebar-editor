@@ -255,18 +255,30 @@ const styles = await page.evaluate(() => {
     usesMarkdownFonts: cssText.includes('--dsw-font-markdown-base'),
     usesHeadingFonts: cssText.includes('--dsw-font-markdown-h1'),
     usesCodeFont: cssText.includes('--ds-font-family-code'),
+    editorFontFamily: editor === null ? '' : getComputedStyle(editor).fontFamily,
   };
 });
 check('stylesheet injected once', styles.injected === true);
 check('stylesheet was not dropped', styles.ruleCount > 20, `${styles.ruleCount} rules`);
 check('design tokens resolve on the root', styles.tokenText !== '', styles.tokenText);
 check('body type scale applied', styles.fontSize === '14px', styles.fontSize);
+// The editor must not fall through to Chromium's standard font, which is a serif for
+// Chinese. The app's family is used when the page has one, with a named CJK sans behind
+// it — that order is what keeps a Chinese document sans instead of 宋体.
+check('the editor font is a CJK sans, not the browser serif', /YaHei|PingFang|Noto Sans|sans-serif/i.test(styles.editorFontFamily), styles.editorFontFamily);
+check('the editor font is not Times', /Times/i.test(styles.editorFontFamily) === false, styles.editorFontFamily);
 check('code block has a background', styles.preBackground !== 'rgba(0, 0, 0, 0)' && styles.preBackground !== '', styles.preBackground);
 check('table cells have a rule under them', styles.cellBorder === 'solid', styles.cellBorder);
 check('blockquote has a bar', styles.quoteBorder === '2px', styles.quoteBorder);
 check('typography follows the app Markdown font token', styles.usesMarkdownFonts === true);
 check('headings follow the app heading font tokens', styles.usesHeadingFonts === true);
 check('code follows the app code font token', styles.usesCodeFont === true);
+
+// The font situation is written into the report the client sends the host, because a
+// "it still looks wrong" report is otherwise unattributable from outside the app.
+const fontReport = await page.evaluate(() => window.__test.reports.at(-1)?.font ?? null);
+check('the client reported its resolved font', fontReport !== null && typeof fontReport.fontFamily === 'string', JSON.stringify(fontReport));
+check('the reported font is a CJK sans', /YaHei|PingFang|Noto Sans|sans-serif/i.test(fontReport?.fontFamily ?? ''), fontReport?.fontFamily);
 
 // ── 3. cross-block selection (the thing the CodeMirror route could not do) ───
 console.log('selection');
@@ -488,6 +500,59 @@ check('the document can be scrolled to 420', scrolledBefore === 420, String(scro
 check('saving keeps the reading position', Math.abs(scrolledAfter.top - 420) <= 2, `${scrolledBefore} -> ${scrolledAfter.top}`);
 check('saving while scrolled keeps the same editor node', scrolledAfter.sameNode === true);
 check('saving while scrolled keeps the edit', scrolledAfter.text === true);
+
+// ── 5d. one gesture can arm several save points ─────────────────────────────
+// Clicking into the chat box is a pointerdown *and* a blur; two writes carrying the
+// same version token make the second one conflict, which is what refused to save a
+// document that had already been saved five times.
+console.log('save race');
+await openDoc('dsh-resource://file/session/test/race.md', '# 竞态\n\n正文。\n', { name: 'race.md' }, '正文');
+await placeCaretAfter('正文');
+await page.keyboard.type('A');
+const raceAddress = 'dsh-resource://file/session/test/race.md';
+const savesBeforeRace = await page.evaluate(() => window.__test.saved.length);
+// First save lands but answers with a stale-token conflict whose disk text is exactly
+// ours: the editor must treat that as success, not as「磁盘已变更」.
+await page.evaluate((value) => window.__test.armConflict(value), '# 竞态\n\n正文A。\n');
+await page.keyboard.press('Control+s');
+await page.locator('.dsh-mk-foot-path').click();
+await page.waitForTimeout(500);
+const afterRace = await page.evaluate((addr) => ({
+  adds: window.__test.saved.length,
+  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
+  state: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+  disk: window.__test.files.get(addr)?.text ?? '',
+}), raceAddress);
+check('a stale-token conflict whose bytes are ours is not shown as a conflict', afterRace.notice === null, afterRace.notice);
+check('that save is reported as saved', afterRace.state.includes('已保存'), afterRace.state);
+check('the queued second save wrote nothing extra', afterRace.adds === savesBeforeRace + 1, `${savesBeforeRace} -> ${afterRace.adds}`);
+check('the file holds the edit', afterRace.disk.includes('正文A'), JSON.stringify(afterRace.disk));
+
+// A genuine conflict (the disk really has other bytes) still stops and offers choices.
+await placeCaretAfter('正文A');
+await page.keyboard.type('B');
+await page.evaluate(() => window.__test.armConflict('# 别人改的\n'));
+await page.keyboard.press('Control+s');
+await page.waitForTimeout(400);
+const realConflict = await page.evaluate(() => ({
+  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
+  state: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+  text: document.querySelector('.ProseMirror')?.textContent ?? '',
+}));
+check('a real conflict is shown', realConflict.notice === 'conflict', realConflict.notice);
+check('a real conflict keeps the buffer', realConflict.text.includes('正文AB'), realConflict.text.slice(-20));
+check('a real conflict marks the strip', realConflict.state.includes('磁盘已变更'), realConflict.state);
+const savesBeforeOverwrite = await page.evaluate(() => window.__test.saved.length);
+await page.locator('.dsh-mk-notice button').first().click();
+await page.waitForTimeout(400);
+const afterOverwrite = await page.evaluate((addr) => ({
+  adds: window.__test.saved.length,
+  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
+  disk: window.__test.files.get(addr)?.text ?? '',
+}), raceAddress);
+check('「覆盖磁盘」writes the buffer over the other version', afterOverwrite.disk.includes('正文AB'), JSON.stringify(afterOverwrite.disk));
+check('「覆盖磁盘」clears the strip', afterOverwrite.notice === null, afterOverwrite.notice);
+check('「覆盖磁盘」was one write', afterOverwrite.adds === savesBeforeOverwrite + 1, `${savesBeforeOverwrite} -> ${afterOverwrite.adds}`);
 
 // ── 6. frontmatter survives a round trip ────────────────────────────────────
 console.log('frontmatter');

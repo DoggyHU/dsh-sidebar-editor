@@ -25,6 +25,8 @@ globalThis.__DSH_MILKDOWN_DEBUG__ = true;
 const files = new Map();
 /** Every save payload the body sent, in order. */
 const saved = [];
+/** Payloads the client half reported to the host (`report` endpoint). */
+const reports = [];
 /** Registration metadata the plugin declared. */
 const definitions = [];
 /** Keyed slot components by implementation id. */
@@ -44,6 +46,15 @@ let currentAddress;
  * reproduce it: flip this on and every save answers with a new revision.
  */
 let ownerReloadsOnSave = false;
+/**
+ * Make the next save answer `conflict` while the file holds `text`.
+ *
+ * Two field reports need this: a write that *did* land but came back as a stale-token
+ * conflict (queued save points, or the owner's reload raising the version first), and a
+ * genuine conflict where the disk really has other bytes.
+ * @type {{ text: string } | undefined}
+ */
+let armedConflict;
 
 /** The props the real owner would pass to the keyed document slot. */
 function propsFor(address) {
@@ -101,6 +112,16 @@ async function fakeCall(endpoint, payload) {
     saved.push({ ...payload });
     const file = files.get(payload.address);
     if (file === undefined) return { ok: false, code: 'not-found' };
+    if (armedConflict !== undefined) {
+      // The write lands, but the answer is a conflict carrying whatever the fake disk
+      // now holds: identical bytes = the "stale token, already written" case, different
+      // bytes = a real external edit.
+      const held = armedConflict.text;
+      armedConflict = undefined;
+      file.text = held;
+      file.version = `v${++versionSeq}`;
+      return { ok: false, code: 'conflict', current: { text: file.text, version: file.version, eol: 'lf', bom: false } };
+    }
     file.text = payload.content;
     file.version = `v${++versionSeq}`;
     if (ownerReloadsOnSave === true) {
@@ -136,6 +157,7 @@ globalThis.fetch = async (input, init) => {
     payload = undefined;
   }
   const result = await fakeCall(match[1], payload);
+  if (match[1] === 'report') reports.push(payload);
   return { ok: true, json: async () => result };
 };
 
@@ -205,6 +227,7 @@ root = createRoot(host);
 window.__test = {
   open,
   saved,
+  reports,
   definitions,
   loadedTokens,
   failed,
@@ -225,6 +248,13 @@ window.__test = {
   /** Simulate an owner that reloads the tab whenever the file changes on disk. */
   setOwnerReloadsOnSave(value) {
     ownerReloadsOnSave = value === true;
+  },
+  /**
+   * Arm the next save to answer `conflict` while the disk holds `text`.
+   * @param text - what the fake disk will contain after that save attempt.
+   */
+  armConflict(text) {
+    armedConflict = { text: String(text ?? '') };
   },
   /** Write the fake file behind the editor's back, then tell the owner. */
   writeSilently(address, text) {
