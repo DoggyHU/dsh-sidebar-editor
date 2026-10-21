@@ -11,20 +11,49 @@
  *     baseline, so merely *opening* a file never rewrites it — Milkdown's
  *     round-trip normalises bullets, fences and table padding, and writing that
  *     back on load would reformat every file the user merely looked at;
- *  4. auto-save shortly after typing stops, save immediately on blur and on
- *     Ctrl/Cmd+S, and flush a pending edit before the view is torn down;
- *  5. answer a `conflict` (the file changed on disk) by *stopping* auto-save and
- *     offering overwrite or reload, never by silently clobbering.
+ *  4. save when the user is *done*, never on a timer. There is deliberately no
+ *     "typing stopped" auto-save: a timer that fires 900 ms into a sentence is
+ *     what interrupts a Chinese IME composition, and every "the caret vanished
+ *     after I typed" report traces back to something happening to the view while
+ *     the user was still composing. The triggers are the ones the previous plugin
+ *     was praised for:
+ *       - Ctrl/Cmd+S;
+ *       - the editor losing focus (leaving the document);
+ *       - any pointer/key press outside the editor (clicking the chat box,
+ *         switching conversation, pressing Enter to send);
+ *       - the page being hidden or unloaded;
+ *       - the view being torn down, before it is destroyed.
+ *  5. answer a `conflict` (the file changed on disk) by *stopping* auto-writes and
+ *     offering overwrite or reload, never by silently clobbering;
+ *  6. reconcile the owner's `revision` **in place**. A revision change must never
+ *     remount the editor: destroying the view drops focus and kills an in-flight
+ *     composition, which is indistinguishable from "saving kicked me out".
  *
  * The owner contract is the shipped `loading: 'renderer'` one: the body is mounted
  * before any bytes are read and is handed `{ revision, loaded, failed, reload }`,
  * with `revision` as the only reload trigger.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { joinFrontmatter, mountMilkdown, readMarkdown, splitFrontmatter } from './editor.js';
+import {
+  addTablePart,
+  flushPendingInput,
+  joinFrontmatter,
+  mountMilkdown,
+  readMarkdown,
+  replaceBody,
+  splitFrontmatter,
+  viewOf,
+} from './editor.js';
 
-/** Quiet period after the last edit before the file is written. */
-const AUTO_SAVE_MS = 900;
+/**
+ * The reading position of each open document, keyed by address.
+ *
+ * Module level on purpose: the owner may remount the body when it reloads a tab
+ * after a save, and a scroll offset kept in a ref would be gone with the component.
+ * Reading position is part of "where I was in the document", so it has to survive
+ * that remount.
+ */
+const scrollPositions = new Map();
 
 /**
  * The body.
@@ -37,8 +66,10 @@ export function MilkdownBody(props) {
   const revision = content?.kind === 'renderer' ? content.revision : undefined;
 
   const hostRef = useRef(null);
+  const scrollRef = useRef(null);
   const mountRef = useRef(null);
   const editorRef = useRef(undefined);
+  const viewRef = useRef(undefined);
   const docRef = useRef({ phase: 'loading' });
   /** Latest serialized body Markdown. */
   const markdownRef = useRef(undefined);
@@ -46,14 +77,22 @@ export function MilkdownBody(props) {
   const baselineRef = useRef(undefined);
   /** Preserved frontmatter block, re-attached on save. */
   const frontRef = useRef('');
-  const timerRef = useRef(null);
   /** True while the disk version is unknown (after a conflict or a failed save). */
   const pausedRef = useRef(false);
   const saveRef = useRef(undefined);
+  /** The owner revision this body has already reconciled. */
+  const loadedRevisionRef = useRef(undefined);
+  /** True while an IME composition owns the buffer. */
+  const composingRef = useRef(false);
+  /** The table affordance's last placed value, so a no-op never re-renders. */
+  const tableToolsRef = useRef(undefined);
+  /** The table under the pointer, shown when the caret is elsewhere. */
+  const hoveredTableRef = useRef(undefined);
 
   const [doc, setDoc] = useState({ phase: 'loading' });
   const [state, setState] = useState('idle');
   const [notice, setNotice] = useState(undefined);
+  const [tableTools, setTableTools] = useState(undefined);
 
   /** Copy with a fallback, because a slot can be rendered before the locale binds. */
   const label = useCallback((key, fallback) => (typeof t === 'function' ? t(key) : fallback), [t]);
@@ -68,12 +107,16 @@ export function MilkdownBody(props) {
       const held = docRef.current;
       if (editor === undefined || held.phase !== 'ready') return;
       if (held.writable !== true || typeof call !== 'function') return;
-      const body = markdownRef.current ?? readMarkdown(editor);
+      // Guard against a rebinding race: the render that follows an address change
+      // rebinds `saveRef` to the new document before the old effect's cleanup runs,
+      // and without this check the old buffer would be written into the new file.
+      if (held.address !== address) return;
+      // Apply whatever the DOM observer is still holding before reading the buffer:
+      // an IME commit or an automation `insertText` is not in the state yet.
+      flushPendingInput(editor);
+      const body = readMarkdown(editor) || markdownRef.current;
+      markdownRef.current = body;
       if (force !== true && body === baselineRef.current) return;
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
       setState('saving');
       try {
         const result = await call('save', {
@@ -115,37 +158,96 @@ export function MilkdownBody(props) {
   );
   saveRef.current = save;
 
-  /**
-   * Adopt one serialized document as the buffer, and re-arm the auto-save timer.
-   * @param markdown - the editor's serialized Markdown.
-   */
-  const handleChange = useCallback((markdown) => {
-    markdownRef.current = markdown;
-    if (docRef.current.phase !== 'ready') return;
-    if (markdown === baselineRef.current) {
-      setState('saved');
-      return;
-    }
-    setState('dirty');
-    // While the disk version is unknown, typing must not queue another write: the
-    // next one would either fail or clobber a file someone else changed.
-    if (pausedRef.current) return;
-    if (timerRef.current !== null) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      void saveRef.current?.(false);
-    }, AUTO_SAVE_MS);
+  /** Adopt the editor's current document after a programmatic replacement. */
+  const adoptCurrent = useCallback((version) => {
+    const held = docRef.current;
+    const next = { ...held, version };
+    docRef.current = next;
+    const initial = readMarkdown(editorRef.current);
+    markdownRef.current = initial;
+    baselineRef.current = initial;
+    pausedRef.current = false;
+    setDoc(next);
+    setNotice(undefined);
+    setState('saved');
   }, []);
 
-  // Read the file (and re-read it whenever the owner's revision changes), then
-  // mount the editor. The cleanup persists a pending edit and destroys the view.
+  /** Adopt one serialized document as the buffer, and note it is unsaved. */
+  const handleChange = useCallback((markdown, composing) => {
+    markdownRef.current = markdown;
+    if (docRef.current.phase !== 'ready') return;
+    const dirty = markdown !== baselineRef.current;
+    // The buffer is always current; the *indicator* can wait. Re-rendering React
+    // while an IME composition is in flight is exactly the kind of side effect that
+    // makes candidates vanish and commits the raw Latin keystrokes instead.
+    if (composing === true) {
+      composingRef.current = true;
+      return;
+    }
+    composingRef.current = false;
+    // Deliberately no save timer here: see the file header. The save happens on the
+    // next "the user is done" event, and typing is never interrupted.
+    setState(dirty ? (pausedRef.current ? 'conflict' : 'dirty') : 'saved');
+  }, []);
+
+  /** Place or clear the table affordance from the caret, or from the hovered table. */
+  const positionTableTools = useCallback(() => {
+    const scroll = scrollRef.current;
+    const view = viewRef.current;
+    // While an IME composition owns the editor, do nothing at all: not even a sibling
+    // button may be re-rendered. The next selection change after the commit catches up.
+    if (scroll === null || view === undefined || view.composing === true) return;
+    const { $from } = view.state.selection;
+    let table = null;
+    for (let depth = $from.depth; depth > 0; depth -= 1) {
+      if ($from.node(depth).type.name !== 'table') continue;
+      const dom = view.nodeDOM($from.before(depth));
+      table = dom instanceof HTMLElement ? dom.closest('table') ?? dom : null;
+      break;
+    }
+    if (table === null) table = hoveredTableRef.current ?? null;
+    if (table === null || scroll.contains(table) === false) {
+      if (tableToolsRef.current === undefined) return;
+      tableToolsRef.current = undefined;
+      setTableTools(undefined);
+      return;
+    }
+    const scrollBox = scroll.getBoundingClientRect();
+    const box = table.getBoundingClientRect();
+    const next = {
+      element: table,
+      // Coordinates are inside the scroll container (which is the positioning
+      // context), so the buttons travel with the table when it scrolls.
+      top: box.top - scrollBox.top + scroll.scrollTop - 4,
+      left: box.right - scrollBox.left + scroll.scrollLeft - 4,
+    };
+    const previous = tableToolsRef.current;
+    if (
+      previous !== undefined &&
+      previous.element === next.element &&
+      Math.abs(previous.top - next.top) < 1 &&
+      Math.abs(previous.left - next.left) < 1
+    ) {
+      return;
+    }
+    tableToolsRef.current = next;
+    setTableTools(next);
+  }, []);
+
+  // Read the file and mount the editor, once per address. Reloads do NOT re-run this:
+  // see the revision effect below.
   useEffect(() => {
     if (address === '' || typeof call !== 'function') return undefined;
+    // The save bound to *this* address. `saveRef.current` is rebound by the next
+    // render, which happens before this effect's cleanup, so the teardown flush must
+    // use the captured function or it writes the old buffer into the new file.
+    const saveDocument = save;
     const controller = new AbortController();
     let cancelled = false;
     pausedRef.current = false;
     setState('idle');
     setNotice(undefined);
+    setTableTools(undefined);
     docRef.current = { phase: 'loading' };
     setDoc(docRef.current);
 
@@ -168,10 +270,12 @@ export function MilkdownBody(props) {
         return;
       }
       content?.loaded?.(result.version);
+      loadedRevisionRef.current = revision;
       const parts = splitFrontmatter(result.text);
       frontRef.current = parts.front;
       const next = {
         phase: 'ready',
+        address,
         absolutePath: result.absolutePath,
         path: result.path,
         version: result.version,
@@ -203,11 +307,15 @@ export function MilkdownBody(props) {
           return;
         }
         editorRef.current = editor;
-        // The baseline is what the serializer produces for the document as loaded,
-        // not the file's own bytes: see the header.
+        viewRef.current = viewOf(editor);
         const initial = readMarkdown(editor);
         markdownRef.current = initial;
         baselineRef.current = initial;
+        // Put the reader back where they were. A remount (the owner reloading the tab
+        // after a save) would otherwise drop them at the top of the document.
+        const remembered = scrollPositions.get(address);
+        const scroll = scrollRef.current;
+        if (remembered !== undefined && scroll !== null) scroll.scrollTop = remembered;
       } catch (error) {
         if (cancelled) return;
         docRef.current = { ...next, phase: 'error', code: 'mount', message: String(error?.stack ?? error) };
@@ -219,58 +327,210 @@ export function MilkdownBody(props) {
     return () => {
       cancelled = true;
       controller.abort();
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
       const held = docRef.current;
       const pending = markdownRef.current !== undefined && markdownRef.current !== baselineRef.current;
-      if (held.phase === 'ready' && held.writable === true && pending) void saveRef.current?.(false);
+      if (held.phase === 'ready' && held.writable === true && pending) void saveDocument(false);
+      const scroll = scrollRef.current;
+      if (scroll !== null) scrollPositions.set(address, scroll.scrollTop);
       const editor = editorRef.current;
       editorRef.current = undefined;
+      viewRef.current = undefined;
+      loadedRevisionRef.current = undefined;
       markdownRef.current = undefined;
       baselineRef.current = undefined;
       if (editor !== undefined) void editor.destroy();
     };
     // `doc` is read through `docRef` on purpose: re-running on every edit would
-    // re-open the file. The owner's revision is the only reload trigger.
+    // re-open the file. The address is the only reason to rebuild the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision, address]);
+  }, [address]);
 
-  // Ctrl/Cmd+S saves through the version guard (not an overwrite): a conflict here
-  // should surface, not be forced.
+  // Reconcile the owner's revision **without touching the view's identity**.
   useEffect(() => {
-    const host = hostRef.current;
-    if (host === null) return undefined;
+    if (revision === undefined || docRef.current.phase !== 'ready') return undefined;
+    if (loadedRevisionRef.current === undefined) return undefined;
+    if (loadedRevisionRef.current === revision) return undefined;
+    loadedRevisionRef.current = revision;
+    const controller = new AbortController();
+    let cancelled = false;
+    (async () => {
+      let result;
+      try {
+        result = await call('open', { address }, controller.signal);
+      } catch {
+        return;
+      }
+      if (cancelled || result?.ok !== true) return;
+      const held = docRef.current;
+      if (held.phase !== 'ready') return;
+      content?.loaded?.(result.version);
+      if (held.version === result.version) return;
+      const editor = editorRef.current;
+      if (editor === undefined) return;
+      // Same reason as in `save`: the buffer may still be sitting in the DOM
+      // observer, and deciding "clean" from a stale buffer would replace the words
+      // the user just typed.
+      flushPendingInput(editor);
+      const buffer = readMarkdown(editor) || markdownRef.current;
+      markdownRef.current = buffer;
+      const dirty = buffer !== baselineRef.current;
+      // Our own save coming back as a revision: adopt the token, change nothing else.
+      if (dirty === false && joinFrontmatter(frontRef.current, buffer ?? '') === result.text) {
+        const next = { ...held, version: result.version };
+        docRef.current = next;
+        setDoc(next);
+        return;
+      }
+      if (dirty) {
+        // The buffer wins: never overwrite what the user is typing. The strip offers
+        // the disk version instead.
+        setNotice({ kind: 'external' });
+        return;
+      }
+      if (replaceBody(editor, splitFrontmatter(result.text).body) === true) {
+        const scroll = scrollRef.current;
+        const keep = scroll?.scrollTop;
+        adoptCurrent(result.version);
+        // Replacing the document can move the viewport (a caret change is a scroll
+        // request); the reader did not move, so put them back where they were.
+        if (scroll !== null && scroll !== undefined && keep !== undefined) scroll.scrollTop = keep;
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision]);
+
+  // Save points: Ctrl/Cmd+S, leaving the editor anywhere, and the page going away.
+  // Nothing here runs while the user is typing, which is the whole point.
+  useEffect(() => {
+    const outside = (event) => {
+      const view = viewRef.current;
+      if (view !== undefined && event.target instanceof Node && view.dom.contains(event.target)) return;
+      void saveRef.current?.(false);
+    };
     const onKeyDown = (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
         event.stopPropagation();
         void saveRef.current?.(false);
+        return;
       }
+      outside(event);
     };
-    host.addEventListener('keydown', onKeyDown, true);
-    return () => host.removeEventListener('keydown', onKeyDown, true);
+    const onPointerDown = (event) => outside(event);
+    const flush = (force) => {
+      if (force !== true && document.visibilityState !== 'hidden') return;
+      void saveRef.current?.(false);
+    };
+    const onPageHide = () => flush(true);
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('pagehide', onPageHide);
+    };
   }, []);
+
+  // Keep the table buttons in step with the caret, the pointer and scrolling.
+  //
+  // Driven from DOM events rather than Milkdown's `selectionUpdated` listener: that
+  // hook never fired in this build, and a document-level `selectionchange` is the same
+  // signal the browser itself uses (it also covers clicks, arrow keys and drags).
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (scroll === null) return undefined;
+    let frame = 0;
+    const schedule = () => {
+      if (frame !== 0) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        positionTableTools();
+      });
+    };
+    const onMouseMove = (event) => {
+      const target = event.target instanceof Element ? event.target.closest('table') : null;
+      hoveredTableRef.current = target ?? undefined;
+      schedule();
+    };
+    const onMouseLeave = () => {
+      hoveredTableRef.current = undefined;
+      schedule();
+    };
+    const onScroll = () => {
+      const scroll = scrollRef.current;
+      if (scroll !== null) scrollPositions.set(address, scroll.scrollTop);
+      schedule();
+    };
+    scroll.addEventListener('mousemove', onMouseMove, { passive: true });
+    scroll.addEventListener('mouseleave', onMouseLeave);
+    scroll.addEventListener('scroll', onScroll, { passive: true });
+    document.addEventListener('selectionchange', schedule);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      scroll.removeEventListener('mousemove', onMouseMove);
+      scroll.removeEventListener('mouseleave', onMouseLeave);
+      scroll.removeEventListener('scroll', onScroll);
+      document.removeEventListener('selectionchange', schedule);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [positionTableTools, address]);
+
+  // Warn before the window closes with unsaved work; a save cannot finish while the
+  // page is unloading, so this is the backstop, not the normal path.
+  useEffect(() => {
+    if (state !== 'dirty') return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [state]);
 
   const wrapOn = wrap !== false;
   const stateText =
     doc.phase === 'loading'
       ? label('loading', '读取中…')
-      : state === 'saving'
-        ? label('saving', '保存中…')
-        : state === 'dirty'
-          ? label('unsaved', '未保存')
-          : state === 'error'
-            ? label('saveFailed', '保存失败')
-            : state === 'conflict'
-              ? label('conflictShort', '磁盘已变更')
-              : state === 'saved'
-                ? label('saved', '已保存')
-                : label('readonly', '只读');
+      : doc.writable === false
+        ? label('readonly', '只读')
+        : state === 'saving'
+          ? label('saving', '保存中…')
+          : state === 'dirty'
+            ? label('unsaved', '未保存')
+            : state === 'error'
+              ? label('saveFailed', '保存失败')
+              : state === 'conflict'
+                ? label('conflictShort', '磁盘已变更')
+                : label('saved', '已保存');
 
   const retry = () => {
     if (typeof content?.reload === 'function') content.reload();
+  };
+
+  /** Put the disk version into the editor, abandoning the buffer. */
+  const loadDiskVersion = async () => {
+    try {
+      const result = await call('open', { address });
+      const editor = editorRef.current;
+      if (result?.ok !== true || editor === undefined) return;
+      const parts = splitFrontmatter(result.text);
+      const keep = scrollRef.current?.scrollTop;
+      if (replaceBody(editor, parts.body) === false) return;
+      adoptCurrent(result.version);
+      frontRef.current = parts.front;
+      const scroll = scrollRef.current;
+      if (scroll !== null && scroll !== undefined && keep !== undefined) scroll.scrollTop = keep;
+    } catch {
+      /* the strip keeps showing the offer */
+    }
   };
 
   return (
@@ -280,7 +540,9 @@ export function MilkdownBody(props) {
           <span className="dsh-mk-notice-text">
             {notice.kind === 'conflict'
               ? label('conflict', '磁盘上的文件已变更，保存被拒。')
-              : `${label('saveFailed', '保存失败')}：${notice.message ?? notice.code ?? ''}`}
+              : notice.kind === 'external'
+                ? label('external', '磁盘上的文件已被外部修改。')
+                : `${label('saveFailed', '保存失败')}：${notice.message ?? notice.code ?? ''}`}
           </span>
           {notice.kind === 'conflict' ? (
             <>
@@ -291,6 +553,15 @@ export function MilkdownBody(props) {
                 {label('reload', '重新加载')}
               </button>
             </>
+          ) : notice.kind === 'external' ? (
+            <>
+              <button className="dsh-mk-button" type="button" onClick={() => void loadDiskVersion()}>
+                {label('loadDisk', '载入磁盘版本')}
+              </button>
+              <button className="dsh-mk-button" type="button" onClick={() => setNotice(undefined)}>
+                {label('keepMine', '保留我的修改')}
+              </button>
+            </>
           ) : (
             <button className="dsh-mk-button" type="button" onClick={() => void saveRef.current?.(false)}>
               {label('retry', '重试')}
@@ -299,7 +570,7 @@ export function MilkdownBody(props) {
         </div>
       )}
 
-      <div className="dsh-mk-scroll">
+      <div ref={scrollRef} className="dsh-mk-scroll">
         {doc.phase === 'error' ? (
           <div className="dsh-mk-center" data-kind="error">
             {`${label('error', '打开失败')}：${describeFailure(doc, label)}\n\n${label('switchBack', '可在工具栏下拉里切回官方预览。')}`}
@@ -322,6 +593,35 @@ export function MilkdownBody(props) {
             </div>
           </>
         )}
+        {tableTools === undefined ? null : (
+          <div
+            className="dsh-mk-table-tools"
+            style={{ top: `${tableTools.top}px`, left: `${tableTools.left}px`, transform: 'translate(-100%, -100%)' }}
+            // The buttons must not take the caret out of the table they act on.
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <button
+              className="dsh-mk-button"
+              type="button"
+              title={label('addRowHint', '在表格末尾加一行；Tab 也可以')}
+              onClick={() => {
+                if (editorRef.current !== undefined) addTablePart(editorRef.current, 'row', tableTools.element);
+              }}
+            >
+              {label('addRow', '＋ 行')}
+            </button>
+            <button
+              className="dsh-mk-button"
+              type="button"
+              title={label('addColumnHint', '在表格右侧加一列')}
+              onClick={() => {
+                if (editorRef.current !== undefined) addTablePart(editorRef.current, 'column', tableTools.element);
+              }}
+            >
+              {label('addColumn', '＋ 列')}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="dsh-mk-foot">
@@ -339,6 +639,7 @@ export function MilkdownBody(props) {
         <button
           className="dsh-mk-button"
           type="button"
+          title={label('saveHint', 'Ctrl/Cmd+S')}
           disabled={state !== 'dirty' || doc.writable === false}
           onClick={() => void saveRef.current?.(false)}
         >

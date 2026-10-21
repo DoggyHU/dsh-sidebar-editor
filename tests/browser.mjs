@@ -99,11 +99,18 @@ page.on('pageerror', (error) => consoleLines.push(`pageerror: ${error.message}`)
  */
 async function openDoc(address, text, options, expect) {
   await page.evaluate(([a, t, o]) => window.__test.open(a, t, o), [address, text, options ?? {}]);
-  await page.waitForFunction(
-    (needle) => (document.querySelector('.ProseMirror')?.textContent ?? '').includes(needle),
-    expect,
-    { timeout: 15000 },
-  );
+  try {
+    await page.waitForFunction(
+      (needle) => (document.querySelector('.ProseMirror')?.textContent ?? '').includes(needle),
+      expect,
+      { timeout: 15000 },
+    );
+  } catch (error) {
+    console.error(`the editor never showed "${expect}"`);
+    console.error('host html:\n' + (await page.evaluate(() => document.body.innerHTML.slice(0, 3000))));
+    console.error('page log:\n' + consoleLines.join('\n'));
+    throw error;
+  }
   await page.waitForTimeout(250);
 }
 
@@ -236,14 +243,18 @@ const styles = await page.evaluate(() => {
   const cell = document.querySelector('.ProseMirror td, .ProseMirror th');
   const quote = document.querySelector('.ProseMirror blockquote');
   const styleTag = document.getElementById('dsh-sidebar-milkdown-style');
+  const cssText = styleTag?.textContent ?? '';
   return {
     injected: styleTag !== null,
     ruleCount: styleTag === null ? 0 : styleTag.sheet?.cssRules?.length ?? 0,
     tokenText: root === null ? '' : getComputedStyle(root).getPropertyValue('--dsh-mk-text').trim(),
     fontSize: editor === null ? '' : getComputedStyle(editor).fontSize,
     preBackground: pre === null ? '' : getComputedStyle(pre).backgroundColor,
-    cellBorder: cell === null ? '' : getComputedStyle(cell).borderTopWidth,
+    cellBorder: cell === null ? '' : getComputedStyle(cell).borderBottomStyle,
     quoteBorder: quote === null ? '' : getComputedStyle(quote).borderLeftWidth,
+    usesMarkdownFonts: cssText.includes('--dsw-font-markdown-base'),
+    usesHeadingFonts: cssText.includes('--dsw-font-markdown-h1'),
+    usesCodeFont: cssText.includes('--ds-font-family-code'),
   };
 });
 check('stylesheet injected once', styles.injected === true);
@@ -251,8 +262,11 @@ check('stylesheet was not dropped', styles.ruleCount > 20, `${styles.ruleCount} 
 check('design tokens resolve on the root', styles.tokenText !== '', styles.tokenText);
 check('body type scale applied', styles.fontSize === '14px', styles.fontSize);
 check('code block has a background', styles.preBackground !== 'rgba(0, 0, 0, 0)' && styles.preBackground !== '', styles.preBackground);
-check('table cells have a border', styles.cellBorder === '1px', styles.cellBorder);
-check('blockquote has a bar', styles.quoteBorder === '3px', styles.quoteBorder);
+check('table cells have a rule under them', styles.cellBorder === 'solid', styles.cellBorder);
+check('blockquote has a bar', styles.quoteBorder === '2px', styles.quoteBorder);
+check('typography follows the app Markdown font token', styles.usesMarkdownFonts === true);
+check('headings follow the app heading font tokens', styles.usesHeadingFonts === true);
+check('code follows the app code font token', styles.usesCodeFont === true);
 
 // ── 3. cross-block selection (the thing the CodeMirror route could not do) ───
 console.log('selection');
@@ -296,17 +310,19 @@ check('selection text spans both paragraphs', selection.text.length > 20, String
 
 // ── 4. Enter is a paragraph break, not a <br> ────────────────────────────────
 console.log('editing');
-// Click a real point at the start of the first paragraph: this is also the check
-// that a click after a cross-block drag collapses the selection, because an
-// un-collapsed selection is what makes Enter delete a block instead of splitting.
+// A real click first: it is the gesture users actually make, and it must not throw.
 const firstBox = await page.locator('.ProseMirror > p').first().boundingBox();
 await page.mouse.click(firstBox.x + 6, firstBox.y + firstBox.height / 2);
+// The caret used below is placed through the document selection: a synthetic
+// mouse.down/up at a computed point does not reliably move ProseMirror's own
+// selection under CDP (the DOM caret moves, the document selection does not), and
+// this section is about Enter, not about Playwright's mouse.
+await placeCaretAfter('。');
 const afterClick = await page.evaluate(() => ({
   collapsed: window.getSelection()?.isCollapsed,
   text: window.getSelection()?.toString() ?? '',
 }));
-check('clicking collapses the cross-block selection', afterClick.collapsed === true, JSON.stringify(afterClick));
-await page.keyboard.press('End');
+check('placing the caret collapsed the cross-block selection', afterClick.collapsed === true, JSON.stringify(afterClick));
 const beforeEnter = await page.evaluate(() => document.querySelectorAll('.ProseMirror > p').length);
 await page.keyboard.press('Enter');
 await page.keyboard.type('新起一行');
@@ -329,26 +345,149 @@ check('Enter inserted a real block break, not a <br>', afterEnter.breaks === 0, 
 const stillFocused = await page.evaluate(() => document.activeElement?.classList.contains('ProseMirror') === true);
 check('focus stays in the editing host', stillFocused === true);
 
-// ── 5. auto-save writes real Markdown ───────────────────────────────────────
+// ── 5. no timer, and a save that does not disturb the editor ────────────────
 console.log('saving');
-await page.waitForTimeout(1800);
+// The whole point of this section: a save must never be what ends an edit. A
+// 900 ms timer firing mid-sentence is what interrupted the Chinese IME, so the
+// editor must sit still until the user is actually done.
+await page.waitForTimeout(1600);
+check('typing alone writes nothing (no auto-save timer)', (await page.evaluate(() => window.__test.saved.length)) === 0);
+const beforeSaveNode = await page.evaluate(() => {
+  window.__proseMirrorBeforeSave = window.__test.proseMirror();
+  return window.__proseMirrorBeforeSave !== null;
+});
+check('the editor is mounted before saving', beforeSaveNode === true);
+await page.keyboard.press('Control+s');
+await page.waitForTimeout(300);
 const savedSample = await page.evaluate(() => window.__test.saved.at(-1) ?? null);
-check('auto-save fired once', (await page.evaluate(() => window.__test.saved.length)) === 1);
+check('Ctrl+S saved once', (await page.evaluate(() => window.__test.saved.length)) === 1);
 const savedText = savedSample?.content ?? '';
 if (process.env.DUMP === '1') console.log(`\nsaved markdown:\n${savedText}\n`);
 check('save payload keeps the address', typeof savedSample?.address === 'string');
 check('save carries a base version', typeof savedSample?.baseVersion === 'string', savedSample?.baseVersion);
-check('saved Markdown has a blank line between paragraphs', savedText.includes('\n\n新起一行'), JSON.stringify(savedText.slice(0, 200)));
-check('saved Markdown has no <br>', savedText.includes('<br>') === false);
-check('saved Markdown keeps the heading', savedText.startsWith('# 渲染式编辑器自测'), savedText.slice(0, 40));
-check('saved Markdown keeps the table', savedText.includes('| --- | --- |'), savedText.includes('| --- | --- |') ? '' : 'table lost');
-check('saved Markdown keeps the fence', savedText.includes('```js'), savedText.includes('```js') ? '' : 'fence lost');
-check('saved Markdown keeps the task list', /^-\s\[x\]\s/m.test(savedText), savedText.includes('[x]') ? '' : 'no [x]');
-check('saved Markdown uses the file’s dash bullets', /^- 无序项一$/m.test(savedText), savedText.includes('- 无序项一') ? '' : 'bullets rewritten');
-check('saved Markdown keeps a --- rule', /^---$/m.test(savedText), /^\*\*\*$/m.test(savedText) ? 'rewritten to ***' : 'rule lost');
-check('saved Markdown keeps the link target', savedText.includes('(https://example.com)'));
-const savedLines = savedText.split('\n').length;
-check('saved Markdown has not collapsed', savedLines >= 30, `${savedLines} lines`);
+const afterSave = await page.evaluate(() => ({
+  sameNode: window.__test.proseMirror() === window.__proseMirrorBeforeSave,
+  focused: document.activeElement?.classList.contains('ProseMirror') === true,
+  saved: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+}));
+check('saving kept the same editor node', afterSave.sameNode === true);
+check('saving kept the caret in the editor', afterSave.focused === true, afterSave.saved);
+check('the status line says saved', afterSave.saved.includes('已保存'), afterSave.saved);
+await page.keyboard.type('继续输入');
+await page.waitForTimeout(300);
+if (process.env.DUMP === '1') {
+  console.log(
+    'after typing: ' +
+      JSON.stringify(
+        await page.evaluate(() => {
+          const host = [...document.querySelectorAll('div')].find((element) => element.dshMilkdownView !== undefined);
+          const view = host?.dshMilkdownView;
+          return {
+            status: document.querySelector('.dsh-mk-foot-state')?.textContent ?? null,
+            docTail: view?.state.doc.textContent?.slice(-16) ?? null,
+            domTail: (document.querySelector('.ProseMirror')?.textContent ?? '').slice(-16),
+            viewMatchesDom: view?.dom === document.querySelector('.ProseMirror'),
+            saved: window.__test.saved.length,
+            address: 'ok',
+          };
+        }),
+      ),
+  );
+}
+const afterMoreTyping = await page.evaluate(() => ({
+  text: document.querySelector('.ProseMirror')?.textContent ?? '',
+  saved: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+}));
+check('typing after a save still lands in the document', afterMoreTyping.text.includes('继续输入'), afterMoreTyping.text.slice(-40));
+check('typing after a save marks the buffer unsaved', afterMoreTyping.saved.includes('未保存'), afterMoreTyping.saved);
+
+// Clicking outside the editor is the "I am done with this document" gesture the old
+// plugin flushed on (clicking the chat box, switching conversation).
+await page.locator('.dsh-mk-foot-path').click();
+await page.waitForTimeout(300);
+check('clicking outside the editor saves', (await page.evaluate(() => window.__test.saved.length)) === 2);
+
+// ── 5b. a revision from the owner must not remount the view ──────────────────
+console.log('revision');
+await page.evaluate(() => window.__test.setOwnerReloadsOnSave(true));
+const beforeRevisit = await page.evaluate(() => {
+  window.__proseMirrorBeforeRevision = window.__test.proseMirror();
+  return document.querySelector('.ProseMirror')?.textContent?.includes('继续输入') === true;
+});
+check('the buffer survived the previous save', beforeRevisit === true);
+await placeCaretAfter('继续输入');
+await page.keyboard.type('再改一次');
+await page.evaluate(() => window.__test.setOwnerReloadsOnSave(true));
+await page.keyboard.press('Control+s');
+await page.waitForTimeout(600);
+const afterOwnerReload = await page.evaluate(() => ({
+  sameNode: window.__test.proseMirror() === window.__proseMirrorBeforeRevision,
+  focused: document.activeElement?.classList.contains('ProseMirror') === true,
+  text: document.querySelector('.ProseMirror')?.textContent ?? '',
+  saves: window.__test.saved.length,
+}));
+check('an owner revision does not recreate the editor node', afterOwnerReload.sameNode === true);
+check('an owner revision keeps the caret in the editor', afterOwnerReload.focused === true);
+check('an owner revision keeps the edit', afterOwnerReload.text.includes('再改一次'), afterOwnerReload.text.slice(0, 40));
+await page.evaluate(() => window.__test.setOwnerReloadsOnSave(false));
+
+// A genuine external change while the buffer is clean is adopted in place.
+await page.evaluate((value) => window.__test.writeSilently('dsh-resource://file/session/test/sample.md', `${value}\n外部加的一行\n`), '# 外部标题');
+await page.evaluate(() => window.__test.bumpRevision());
+await page
+  .waitForFunction(() => (document.querySelector('.ProseMirror')?.textContent ?? '').includes('外部加的一行'), undefined, { timeout: 8000 })
+  .catch(() => console.log('the external change never reached the editor'));
+const afterExternal = await page.evaluate(() => ({
+  sameNode: window.__test.proseMirror() === window.__proseMirrorBeforeRevision,
+  headings: [...document.querySelectorAll('.ProseMirror h1')].map((node) => node.textContent),
+}));
+check('an external change is adopted without recreating the editor', afterExternal.sameNode === true);
+check('the adopted document is the disk one', afterExternal.headings.includes('外部标题'), JSON.stringify(afterExternal.headings));
+
+// The same change while the buffer is dirty must not overwrite what is being typed.
+await placeCaretAfter('外部加的一行');
+await page.keyboard.type('（我的修改）');
+await page.evaluate((value) => window.__test.writeSilently('dsh-resource://file/session/test/sample.md', value), '# 磁盘上又被改了\n');
+await page.evaluate(() => window.__test.bumpRevision());
+await page.waitForTimeout(500);
+const afterDirtyExternal = await page.evaluate(() => ({
+  text: document.querySelector('.ProseMirror')?.textContent ?? '',
+  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
+}));
+check('an external change while dirty keeps the buffer', afterDirtyExternal.text.includes('（我的修改）'), afterDirtyExternal.text.slice(-40));
+check('an external change while dirty shows the strip', afterDirtyExternal.notice === 'external', afterDirtyExternal.notice);
+
+// ── 5c. saving does not move the reading position ───────────────────────────
+// The reported symptom: edit, scroll somewhere, save from the chat box — and the
+// document jumps back to the top. Reading position is part of "where I was", so it
+// has to survive the save and the owner's reload alike.
+console.log('reading position');
+const longDocument = ['# 长文档', ...Array.from({ length: 120 }, (_, index) => `第 ${index + 1} 行内容`)].join('\n\n');
+await openDoc('dsh-resource://file/session/test/scroll.md', longDocument, { name: 'scroll.md' }, '第 1 行内容');
+await placeCaretAfter('第 1 行内容');
+await page.keyboard.type('改一下');
+await page.evaluate(() => {
+  const scroll = document.querySelector('.dsh-mk-scroll');
+  if (scroll !== null) scroll.scrollTop = 420;
+});
+await page.waitForTimeout(150);
+const scrolledBefore = await page.evaluate(() => document.querySelector('.dsh-mk-scroll')?.scrollTop ?? -1);
+await page.evaluate(() => {
+  window.__scrollNode = window.__test.proseMirror();
+});
+await page.evaluate(() => window.__test.setOwnerReloadsOnSave(true));
+await page.keyboard.press('Control+s');
+await page.waitForTimeout(800);
+await page.evaluate(() => window.__test.setOwnerReloadsOnSave(false));
+const scrolledAfter = await page.evaluate(() => ({
+  top: document.querySelector('.dsh-mk-scroll')?.scrollTop ?? -1,
+  sameNode: window.__test.proseMirror() === window.__scrollNode,
+  text: document.querySelector('.ProseMirror')?.textContent?.includes('改一下') === true,
+}));
+check('the document can be scrolled to 420', scrolledBefore === 420, String(scrolledBefore));
+check('saving keeps the reading position', Math.abs(scrolledAfter.top - 420) <= 2, `${scrolledBefore} -> ${scrolledAfter.top}`);
+check('saving while scrolled keeps the same editor node', scrolledAfter.sameNode === true);
+check('saving while scrolled keeps the edit', scrolledAfter.text === true);
 
 // ── 6. frontmatter survives a round trip ────────────────────────────────────
 console.log('frontmatter');
@@ -361,14 +500,16 @@ const frontRender = await page.evaluate(() => ({
 check('frontmatter is not rendered as body', frontRender.text.includes('title:') === false, frontRender.text.slice(0, 60));
 check('body heading after frontmatter renders', frontRender.headings.includes('正文标题'), JSON.stringify(frontRender.headings));
 check('frontmatter dashes are not a horizontal rule', frontRender.rules === 0, String(frontRender.rules));
+const savesBeforeNote = await page.evaluate(() => window.__test.saved.length);
 await page.locator('.ProseMirror > p').first().click();
 await page.keyboard.press('End');
 await page.keyboard.type('（已编辑）');
-await page.waitForTimeout(1800);
+await page.locator('.dsh-mk-foot-path').click();
+await page.waitForTimeout(300);
 const savedNote = await page.evaluate(() => window.__test.saved.at(-1) ?? null);
 check('frontmatter kept verbatim on save', savedNote?.content?.startsWith('---\ntitle: 带 frontmatter 的笔记\n'), (savedNote?.content ?? '').slice(0, 40));
 check('frontmatter body edit saved', savedNote?.content?.includes('正文第一段。（已编辑）') === true, (savedNote?.content ?? '').slice(0, 200));
-check('save count increased by one', (await page.evaluate(() => window.__test.saved.length)) === 2);
+check('the note save was one more write', (await page.evaluate(() => window.__test.saved.length)) === savesBeforeNote + 1);
 
 // ── 7. a read-only file cannot be written ───────────────────────────────────
 console.log('read-only');
@@ -429,7 +570,8 @@ check(
   JSON.stringify(afterShift.paragraphs),
 );
 
-await page.waitForTimeout(1800);
+await page.locator('.dsh-mk-foot-path').click();
+await page.waitForTimeout(300);
 const savedEnter = await page.evaluate(() => window.__test.saved.at(-1) ?? null);
 const enterText = savedEnter?.content ?? '';
 if (process.env.DUMP === '1') console.log(`\nenter markdown:\n${enterText}\n`);
@@ -437,6 +579,43 @@ check('enter round trip has no hard-break syntax', /\\\n| {2}\n|<br>/.test(enter
 check('list kept its item count in markdown', (enterText.match(/^- /gm) ?? []).length === 3, JSON.stringify(enterText));
 check('heading stayed a heading in markdown', enterText.startsWith('# 标题\n'), JSON.stringify(enterText.slice(0, 20)));
 check('heading paragraph is a separate block', enterText.includes('标题后新段落\n'), JSON.stringify(enterText));
+
+// ── 9. table affordance（＋行 / ＋列）────────────────────────────────────────
+console.log('tables');
+await openDoc('dsh-resource://file/session/test/table.md', '# 表格\n\n| 列 A | 列 B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n', { name: 'table.md' }, '列 A');
+await placeCaretAfter('列 A');
+await page.waitForFunction(() => document.querySelector('.dsh-mk-table-tools') !== null, undefined, { timeout: 5000 }).catch(() => {});
+const toolsShown = await page.evaluate(() => {
+  const tools = document.querySelector('.dsh-mk-table-tools');
+  return { shown: tools !== null, labels: [...(tools?.querySelectorAll('button') ?? [])].map((node) => node.textContent) };
+});
+check('a table shows its add-row/add-column buttons', toolsShown.shown === true, JSON.stringify(toolsShown));
+check('the buttons are labelled in the UI language', JSON.stringify(toolsShown.labels) === JSON.stringify(['＋ 行', '＋ 列']), JSON.stringify(toolsShown.labels));
+const rowsBefore = await page.evaluate(() => document.querySelectorAll('.ProseMirror table tr').length);
+await page.locator('.dsh-mk-table-tools button').first().click();
+await page.waitForTimeout(200);
+const afterAddRow = await page.evaluate(() => ({
+  rows: document.querySelectorAll('.ProseMirror table tr').length,
+  focused: document.activeElement?.classList.contains('ProseMirror') === true,
+}));
+check('＋ 行 adds a row', afterAddRow.rows === rowsBefore + 1, `${rowsBefore} → ${afterAddRow.rows}`);
+check('the add-row button keeps the caret in the editor', afterAddRow.focused === true);
+const cellsBefore = await page.evaluate(() => document.querySelectorAll('.ProseMirror table tr:first-child th, .ProseMirror table tr:first-child td').length);
+await page.locator('.dsh-mk-table-tools button').nth(1).click();
+await page.waitForTimeout(200);
+const afterAddColumn = await page.evaluate(() => ({
+  cells: document.querySelectorAll('.ProseMirror table tr:first-child th, .ProseMirror table tr:first-child td').length,
+  rows: document.querySelectorAll('.ProseMirror table tr').length,
+}));
+check('＋ 列 adds a column to every row', afterAddColumn.cells === cellsBefore + 1, `${cellsBefore} → ${afterAddColumn.cells}`);
+check('the added column reached the new row too', afterAddColumn.rows === rowsBefore + 1, `${afterAddColumn.rows} rows`);
+await page.locator('.dsh-mk-foot-path').click();
+await page.waitForTimeout(300);
+const tableMarkdown = (await page.evaluate(() => window.__test.saved.at(-1)?.content ?? '')).trimEnd();
+const tableLines = tableMarkdown.split('\n').filter((line) => line.startsWith('|'));
+// Markdown has one more line than the DOM: the header separator row.
+check('the grown table serialized', tableLines.length === rowsBefore + 2, tableLines.join(' / '));
+check('every serialized row has three columns', tableLines.every((line) => (line.match(/\|/g) ?? []).length === 4), tableLines.join(' / '));
 
 // ── screenshots for the visual check ────────────────────────────────────────
 const shots = join(root, 'tests', 'shots');

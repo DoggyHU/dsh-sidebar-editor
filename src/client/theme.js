@@ -1,28 +1,29 @@
 /**
  * The editor's stylesheet.
  *
- * Three layers, in this order:
+ * Four layers, in this order:
  *
- *  1. ProseMirror's structural rules. A contenteditable needs `position: relative`
- *     on the editing host (gap cursor, selected-node outline), `pre-wrap` so
- *     newlines survive, and the selected-node/gap-cursor rules, or dropping the
- *     caret between two blocks looks like the plugin is broken.
- *  2. The document's own typography, which is what "看着舒服" means here: one
- *     reading column, the same design tokens the shipped preview uses, and sizes
- *     tuned for a sidebar rather than a full page.
- *  3. This plugin's chrome: the notice strip and the status foot.
- *
- * The tokens are the app's own (`--dsw-alias-*`), each with a literal fallback so
- * the editor is still legible if a token is renamed by a future build.
+ *  1. custom properties, on the plugin's own root — they have to live inside a rule,
+ *     because a stylesheet that opens with a bare declaration is dropped whole and
+ *     takes every rule below it with it (no error anywhere);
+ *  2. ProseMirror's structural rules. A contenteditable needs `position: relative` on
+ *     the editing host (gap cursor, selected-node outline), `pre-wrap` so newlines
+ *     survive, and the selected-node/gap-cursor rules, or dropping the caret between
+ *     two blocks looks like the plugin is broken;
+ *  3. the document's typography, transcribed from the shipped preview's own Markdown
+ *     stylesheet (`--dsw-font-markdown-*`, `--dsw-alias-markdown-*`, table paddings).
+ *     Using those tokens instead of literal sizes is what makes the editor follow the
+ *     user's font settings: the theme service recomputes them when the setting
+ *     changes, and the preview and this editor move together;
+ *  4. this plugin's chrome: the notice strip, the table buttons and the status foot.
  */
 
 /**
- * Document-level CSS variables this plugin sets on its own root.
+ * Custom properties on the plugin root.
  *
- * They have to live inside a rule: custom properties at the top level of a
- * stylesheet are not a rule, and a stylesheet that opens with one is dropped
- * wholesale — every `var(--dsh-mk-*)` below then resolves to nothing and the
- * editor loses its borders and code-block background with no error anywhere.
+ * Each one points at an app token with a literal fallback, so the editor is still
+ * legible in a page without the theme (the test harness is exactly that page) and
+ * still correct in the app.
  */
 const VARIABLES = `
   .dsh-mk-root {
@@ -39,6 +40,7 @@ const VARIABLES = `
     --dsh-mk-error: var(--dsw-alias-state-error-primary, #cf222e);
     --dsh-mk-warn: var(--dsw-alias-state-warn-secondary, #9a6700);
     --dsh-mk-mono: var(--ds-font-family-code, var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
+    --dsh-mk-body-font: var(--dsw-font-markdown-base, 400 14px/1.72 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
   }
 `;
 
@@ -70,81 +72,114 @@ const STRUCTURAL = `
   .dsh-mk-prose.ProseMirror-focused .ProseMirror-gapcursor { display: block; }
 `;
 
-/** The document's typography. */
+/**
+ * The document's typography.
+ *
+ * A transcription of the shipped `._markdown_*` rules — same tokens, same margins,
+ * same table paddings — so an editable document looks like the read-only one it
+ * replaces. Literal fallbacks exist only for a page without the theme.
+ */
 const TYPOGRAPHY = `
   .dsh-mk-surface {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font: var(--dsh-mk-body-font);
     color: var(--dsh-mk-text);
-    font-size: 14px;
-    line-height: 1.72;
-    font-family: inherit;
-    letter-spacing: 0.005em;
     -webkit-font-smoothing: antialiased;
   }
   .dsh-mk-surface ::selection { background: var(--dsh-mk-selection); }
+  .dsh-mk-surface strong { font-weight: 600; }
 
-  .dsh-mk-surface > * + * { margin-top: 0.72em; }
-  .dsh-mk-surface p { margin: 0; }
-  .dsh-mk-surface p + p { margin-top: 0.72em; }
-
-  .dsh-mk-surface h1, .dsh-mk-surface h2, .dsh-mk-surface h3,
-  .dsh-mk-surface h4, .dsh-mk-surface h5, .dsh-mk-surface h6 {
-    margin: 1.5em 0 0.62em; font-weight: 600; line-height: 1.32; letter-spacing: -0.005em;
+  .dsh-mk-surface h1 { font: var(--dsw-font-markdown-h1, 600 22px/1.35 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 32px 0 16px; }
+  .dsh-mk-surface h2 { font: var(--dsw-font-markdown-h2, 600 18px/1.4 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 32px 0 16px; }
+  .dsh-mk-surface h3 { font: var(--dsw-font-markdown-h3, 600 16px/1.45 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 32px 0 16px; }
+  .dsh-mk-surface h4 { font: var(--dsw-font-markdown-h4, 600 15px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif); margin: 16px 0; }
+  .dsh-mk-surface :where(h5, h6) {
+    font: var(--dsw-font-markdown-base-strong, 600 14px/1.72 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    margin: 16px 0;
   }
-  .dsh-mk-surface h1 { font-size: 1.62em; }
-  .dsh-mk-surface h2 { font-size: 1.32em; }
-  .dsh-mk-surface h3 { font-size: 1.14em; }
-  .dsh-mk-surface h4 { font-size: 1em; }
-  .dsh-mk-surface h5 { font-size: 0.94em; }
-  .dsh-mk-surface h6 { font-size: 0.88em; color: var(--dsh-mk-dim); }
-  .dsh-mk-surface > h1:first-child, .dsh-mk-surface > h2:first-child,
-  .dsh-mk-surface > h3:first-child { margin-top: 0; }
+  .dsh-mk-surface :where(h1, h2, h3, h4, h5, h6) strong { font-weight: inherit; }
+  .dsh-mk-surface > *:first-child, .dsh-mk-surface p:first-child { margin-top: 0 !important; }
+  .dsh-mk-surface > *:last-child, .dsh-mk-surface p:last-child { margin-bottom: 0 !important; }
 
-  .dsh-mk-surface ul, .dsh-mk-surface ol { margin: 0; padding-left: 1.5em; }
-  .dsh-mk-surface li > * + * { margin-top: 0.28em; }
-  .dsh-mk-surface li + li { margin-top: 0.28em; }
-  .dsh-mk-surface ul ul, .dsh-mk-surface ul ol, .dsh-mk-surface ol ul, .dsh-mk-surface ol ol { margin-top: 0.28em; }
-  .dsh-mk-surface li p { margin: 0; }
+  .dsh-mk-surface p { margin: 16px 0; }
+
+  .dsh-mk-surface a {
+    color: var(--dsw-alias-link, #4d6bfe);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .dsh-mk-surface a:hover, .dsh-mk-surface a:focus {
+    outline: none;
+    text-decoration: underline dotted var(--dsw-alias-link, #4d6bfe);
+    text-underline-offset: 3px;
+  }
+
+  .dsh-mk-surface :where(ul, ol) { margin: 16px 0; padding-left: 18px; }
+  .dsh-mk-surface li:not(:first-child) { margin-top: 6px; }
+  .dsh-mk-surface li > :where(ul, ol) { margin-top: 4px; }
+  .dsh-mk-surface li::marker { line-height: 24px; color: var(--dsh-mk-dim); }
+  .dsh-mk-surface li > p { margin: 8px 0; }
+  .dsh-mk-surface li > *:first-child { margin-top: 0; }
+  .dsh-mk-surface li > *:last-child { margin-bottom: 0; }
+
+  .dsh-mk-surface hr {
+    display: block; border: none; height: 0.5px; margin: 32px 0;
+    background: var(--dsh-mk-rule);
+  }
 
   .dsh-mk-surface blockquote {
-    margin: 0; padding: 0.1em 0 0.1em 0.9em;
-    border-left: 3px solid var(--dsh-mk-faint);
-    color: var(--dsh-mk-dim);
+    border-left: 2px solid var(--dsw-alias-label-caption, var(--dsh-mk-faint));
+    margin: 16px 0 0; padding-left: 14px;
   }
-  .dsh-mk-surface blockquote > * + * { margin-top: 0.6em; }
 
-  .dsh-mk-surface hr { border: none; border-top: 1px solid var(--dsh-mk-rule); margin: 1.6em 0; }
-  .dsh-mk-surface a { color: var(--dsw-alias-state-info-primary, #0969da); text-decoration: none; }
-  .dsh-mk-surface a:hover { text-decoration: underline; }
-
-  .dsh-mk-surface code {
-    font-family: var(--dsh-mk-mono); font-size: 0.88em;
-    padding: 0.14em 0.36em; border-radius: 4px;
-    background: var(--dsh-mk-layer); border: 1px solid var(--dsh-mk-border);
-  }
   .dsh-mk-surface pre {
-    margin: 0; padding: 12px 14px; overflow-x: auto;
-    background: var(--dsh-mk-layer); border: 1px solid var(--dsh-mk-rule); border-radius: 8px;
-    font-family: var(--dsh-mk-mono); font-size: 0.86em; line-height: 1.6;
+    margin: 16px 0; padding: 12px 14px; overflow: auto;
+    background: var(--dsh-mk-layer); border-radius: var(--dsw-radius-md, 8px);
+    font: var(--dsw-font-markdown-code-block, 400 12px/1.6 var(--dsh-mk-mono));
+    font-family: var(--dsh-mk-mono);
+    font-size: 0.86em;
   }
-  .dsh-mk-surface pre code { padding: 0; border: none; background: none; font-size: inherit; }
+  .dsh-mk-surface pre code { padding: 0; border: none; background: none; font: inherit; }
 
-  .dsh-mk-surface img { max-width: 100%; height: auto; border-radius: 6px; }
+  .dsh-mk-surface :not(pre) > code {
+    font: var(--dsw-font-markdown-code, 400 0.875em/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    font-family: var(--ds-font-family-code, var(--dsh-mk-mono));
+    font-size: 0.875em;
+    background-color: var(--dsw-alias-markdown-inline-code, var(--dsh-mk-layer));
+    border: 0.5px solid var(--dsw-alias-border-l1, var(--dsh-mk-border));
+    border-radius: var(--dsw-radius-sm, 4px);
+    padding: 0 5px;
+  }
+  .dsh-mk-surface :where(h1, h2, h3, h4, h5, h6) code { font: inherit; font-family: var(--dsh-mk-mono); }
 
-  /* GFM tables: the wrapper scrolls, the table keeps its borders and hugs its
-     content instead of stretching to the reading column. */
-  .dsh-mk-surface .tableWrapper { overflow-x: auto; margin: 0; }
-  .dsh-mk-surface table {
-    border-collapse: collapse; table-layout: auto; width: auto; min-width: 40%; margin: 0;
-    font-size: 0.94em;
+  .dsh-mk-surface img { display: block; max-width: 100%; height: auto; border-radius: var(--dsw-radius-md, 8px); }
+
+  /* GFM tables: the shipped preview draws horizontal rules only, and scrolls
+     sideways instead of squeezing columns. prosemirror-tables wraps the table in
+     .tableWrapper, which is this plugin's scroll container. */
+  .dsh-mk-surface .tableWrapper { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+  .dsh-mk-surface table { border-collapse: collapse; width: max-content; max-width: max-content; }
+  .dsh-mk-surface th {
+    text-align: start; padding: 10px 16px;
+    border-bottom: 0.5px solid var(--dsw-alias-border-l3, var(--dsh-mk-rule));
+    font: var(--dsw-font-markdown-table-head, 600 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    min-width: 100px;
   }
-  .dsh-mk-surface th, .dsh-mk-surface td {
-    border: 1px solid var(--dsh-mk-rule); padding: 0.42em 0.7em; vertical-align: top;
-    position: relative; min-width: 3.5em;
+  .dsh-mk-surface td {
+    padding: 10px 16px;
+    border-bottom: 0.5px solid var(--dsh-mk-rule);
+    font: var(--dsw-font-markdown-table, 400 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif);
+    min-width: 100px;
   }
-  .dsh-mk-surface th { background: var(--dsh-mk-layer); font-weight: 600; text-align: left; }
-  .dsh-mk-surface .selectedCell:after {
+  .dsh-mk-surface th:first-child, .dsh-mk-surface td:first-child { padding-left: 0; }
+  .dsh-mk-surface td:last-child { padding-right: 0; }
+  .dsh-mk-surface table p { margin: 0; }
+  .dsh-mk-surface table code { font-size: 11px; }
+  .dsh-mk-surface th.selectedCell:after, .dsh-mk-surface td.selectedCell:after {
     content: ''; position: absolute; inset: 0; background: var(--dsh-mk-selection); pointer-events: none;
   }
+  .dsh-mk-surface th, .dsh-mk-surface td { position: relative; }
   .dsh-mk-surface .column-resize-handle {
     position: absolute; right: -2px; top: 0; bottom: -2px; width: 4px;
     background: var(--dsh-mk-selection); pointer-events: none;
@@ -152,15 +187,14 @@ const TYPOGRAPHY = `
   .dsh-mk-surface .resize-cursor { cursor: col-resize; }
 
   /* GFM task lists. The schema renders an li[data-item-type="task"] with a
-     data-checked attribute rather than an <input>, so the box is drawn here
-     instead of by a node view. The box hangs off the item's first paragraph: on the
-     li itself it would sit on its own line, because the paragraph after it is a
-     block. */
+     data-checked attribute rather than an <input>, so the box is drawn here instead
+     of by a node view. The box hangs off the item's first paragraph: on the li
+     itself it would sit on its own line, because the paragraph after it is a block. */
   .dsh-mk-surface li[data-item-type="task"] { list-style: none; }
   .dsh-mk-surface li[data-item-type="task"] > p::before {
     content: ''; display: inline-block; box-sizing: border-box;
-    width: 13px; height: 13px; margin: 0 0.5em 0 -1.34em; vertical-align: -0.12em;
-    border: 1.5px solid var(--dsh-mk-faint); border-radius: 3.5px; background-color: transparent;
+    width: 13px; height: 13px; margin: 0 8px 0 -1.6em; vertical-align: -0.12em;
+    border: 1px solid var(--dsh-mk-faint); border-radius: 3px; background-color: transparent;
   }
   .dsh-mk-surface li[data-item-type="task"][data-checked="true"] > p::before {
     border-color: var(--dsw-alias-state-success-primary, #1a7f37);
@@ -177,7 +211,7 @@ const CHROME = `
     display: flex; flex-direction: column; height: 100%; min-height: 0;
     background: var(--dsh-mk-bg); color: var(--dsh-mk-text);
   }
-  .dsh-mk-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .dsh-mk-scroll { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
   .dsh-mk-pad { max-width: 54em; margin: 0 auto; padding: 18px 22px 64px; }
   .dsh-mk-nowrap .dsh-mk-pad { max-width: none; }
 
@@ -188,13 +222,27 @@ const CHROME = `
   }
   .dsh-mk-notice[data-kind="error"] { color: var(--dsh-mk-error); }
   .dsh-mk-notice[data-kind="conflict"] { color: var(--dsh-mk-warn); }
+  .dsh-mk-notice[data-kind="external"] { color: var(--dsh-mk-warn); }
   .dsh-mk-notice-text { flex: 1 1 12em; min-width: 0; }
+
   .dsh-mk-button {
     appearance: none; border: 1px solid var(--dsh-mk-border); background: transparent;
     color: inherit; font: inherit; font-size: 12px; padding: 2px 9px; border-radius: 6px; cursor: pointer;
   }
   .dsh-mk-button:hover { background: var(--dsh-mk-hover); }
   .dsh-mk-button:active { background: var(--dsh-mk-active); }
+  .dsh-mk-button:disabled { opacity: 0.45; cursor: default; background: transparent; }
+
+  /* The table affordance: ＋行 / ＋列, positioned over the table it belongs to. */
+  .dsh-mk-table-tools {
+    position: absolute; z-index: 5; display: flex; gap: 2px; padding: 2px;
+    border-radius: 8px; background: var(--dsh-mk-bg);
+    border: 1px solid var(--dsh-mk-border);
+    box-shadow: 0 1px 6px rgba(15, 23, 42, 0.12);
+  }
+  .dsh-mk-table-tools .dsh-mk-button {
+    padding: 0 7px; font-size: 11px; line-height: 20px; border-color: transparent; white-space: nowrap;
+  }
 
   .dsh-mk-foot {
     flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
@@ -207,7 +255,8 @@ const CHROME = `
     direction: rtl; text-align: left;
   }
   .dsh-mk-foot-state { flex: 0 0 auto; }
-  .dsh-mk-foot-state[data-state="dirty"], .dsh-mk-foot-state[data-state="saving"] { color: var(--dsh-mk-warn); }
+  .dsh-mk-foot-state[data-state="dirty"] { color: var(--dsh-mk-warn); }
+  .dsh-mk-foot-state[data-state="saving"] { color: var(--dsh-mk-warn); }
   .dsh-mk-foot-state[data-state="error"], .dsh-mk-foot-state[data-state="conflict"] { color: var(--dsh-mk-error); }
   .dsh-mk-foot-state[data-state="saved"] { color: var(--dsh-mk-faint); }
 
@@ -224,8 +273,8 @@ const STYLE_ID = 'dsh-sidebar-milkdown-style';
  * Put the stylesheet in the document once.
  *
  * Called from the plugin body rather than from module scope: the client module is
- * evaluated in a worker-capable loader, and touching `document` at import time is
- * the kind of thing that only fails in production.
+ * evaluated by a loader that may run before a document exists, and touching
+ * `document` at import time is the kind of thing that only fails in production.
  * @param doc - the document to inject into.
  */
 export function ensureStyles(doc) {

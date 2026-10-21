@@ -34,6 +34,16 @@ let versionSeq = 0;
 let revision = 0;
 let root;
 let mounted;
+/** The address currently rendered, so a revision bump can re-render it. */
+let currentAddress;
+/**
+ * Simulate an owner that reloads the tab when the file changes on disk.
+ *
+ * The real preview bumped its revision after a save in the field report (that is
+ * what made the editor remount mid-typing), so the harness has to be able to
+ * reproduce it: flip this on and every save answers with a new revision.
+ */
+let ownerReloadsOnSave = false;
 
 /** The props the real owner would pass to the keyed document slot. */
 function propsFor(address) {
@@ -93,6 +103,13 @@ async function fakeCall(endpoint, payload) {
     if (file === undefined) return { ok: false, code: 'not-found' };
     file.text = payload.content;
     file.version = `v${++versionSeq}`;
+    if (ownerReloadsOnSave === true) {
+      // The owner noticing the write and reloading the tab. React reconciles the same
+      // component element, so this reproduces the field report exactly: a revision
+      // arrives while the user is still typing.
+      revision += 1;
+      renderBody(currentAddress);
+    }
     return { ok: true, version: file.version, bytes: payload.content.length };
   }
   return { ok: true };
@@ -129,6 +146,7 @@ globalThis.fetch = async (input, init) => {
 function renderBody(address) {
   const component = components.get('dsh-sidebar-milkdown');
   if (component === undefined) throw new Error('the plugin registered no body');
+  currentAddress = address;
   root.render(createElement(component, propsFor(address)));
 }
 
@@ -191,6 +209,35 @@ window.__test = {
   loadedTokens,
   failed,
   files,
+  /** Bump the owner's revision the way a real reload would. */
+  bumpRevision() {
+    revision += 1;
+    renderBody(currentAddress);
+  },
+  /** The current owner revision, for diagnostics. */
+  revisionValue() {
+    return revision;
+  },
+  /** Whether the fake owner reloads after a save, for diagnostics. */
+  ownerReloads() {
+    return ownerReloadsOnSave;
+  },
+  /** Simulate an owner that reloads the tab whenever the file changes on disk. */
+  setOwnerReloadsOnSave(value) {
+    ownerReloadsOnSave = value === true;
+  },
+  /** Write the fake file behind the editor's back, then tell the owner. */
+  writeSilently(address, text) {
+    const file = files.get(address);
+    if (file === undefined) return false;
+    file.text = text;
+    file.version = `v${++versionSeq}`;
+    return true;
+  },
+  /** The live ProseMirror DOM node, for identity checks across a reload. */
+  proseMirror() {
+    return document.querySelector('.ProseMirror');
+  },
   get mounted() {
     return mounted;
   },
