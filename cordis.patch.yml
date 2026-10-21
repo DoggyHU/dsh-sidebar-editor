@@ -1,0 +1,13 @@
+# Mount this plugin's host row into a dsh profile.
+#
+# The visible feature (the ProseMirror/Milkdown Markdown editor) lives in the
+# browser half. A package is only scanned for a browser half when it is mounted
+# as a host row, so this row exists even though the host half is deliberately
+# thin: it registers a `ping` and a `diag` endpoint under this plugin's own
+# `/api` prefix and nothing else.
+#
+# File reading and writing still ride dsh-sidebar-editor's authenticated routes
+# for now (see README "phase 2"); that plugin must therefore stay mounted.
+- insert:
+    - id: sidebar-milkdown
+      name: 'dsh-sidebar-milkdown'

@@ -1,0 +1,3 @@
+# 这个仓库保存的是「可直接运行」的快照：禁止任何换行符转换，
+# 保证 checkout 出来的文件与提交时逐字节一致（Windows 的 core.autocrlf=true 也不会生效）。
+* -text

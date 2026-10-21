@@ -1,0 +1,51 @@
+{
+  "name": "dsh-sidebar-milkdown",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "给 DSH 官方右侧栏文档预览增加一个基于 ProseMirror（Milkdown）的 Markdown 渲染式编辑器：一个文档模型、一个视图，输入法与跨段落选区由编辑器自己保证。",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-sidebar-documentpreview"
+      ],
+      "external": []
+    }
+  },
+  "files": [
+    "src",
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node tests/artifact.mjs && node tests/browser.mjs",
+    "test:artifact": "node tests/artifact.mjs",
+    "test:browser": "node tests/browser.mjs"
+  },
+  "dependencies": {
+    "@milkdown/kit": "7.22.3"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "esbuild": "^0.25.0",
+    "jsdom": "30.1.1",
+    "playwright-core": "^1.63.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "license": "MIT"
+}
