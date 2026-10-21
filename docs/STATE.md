@@ -11,7 +11,7 @@
 | 版本 | 0.1.0 |
 | 产物 | `lib/client.js` 1052.2 KB（130 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3（含 `@milkdown/core`、`preset-commonmark`、`preset-gfm`、`plugin/history`、`plugin/listener`、`prose/*`） |
-| 测试 | `pnpm test`：打包契约 9 项 + 行为 40 项，全绿；连跑 3 次稳定 |
+| 测试 | `pnpm test`：宿主半 28 项 + 打包契约 11 项 + 行为 40 项，全绿；连跑 3 次稳定 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`，`dsh-sidebar-editor` **已从 bundles 移除**（依赖项保留，恢复只需一行） |
 
 ---
@@ -95,8 +95,9 @@ Milkdown 的往返是规范化的，所以底稿 `baseline = readMarkdown(在刚
 
 ## 四、测试与它们各自的盲区
 
-`pnpm test` = `tests/artifact.mjs` + `tests/browser.mjs`，都在真实 Chromium（`%LOCALAPPDATA%\ms-playwright\chromium-1208`）。
+`pnpm test` = `tests/host.mjs` + `tests/artifact.mjs` + `tests/browser.mjs`。
 
+- `host.mjs`：在假 ctx（`connection.fetch.register` / `fs` / `sessions` / `sandboxPolicy` / `effect` / `inject`）上挂 `apply()`，断言 6 条路由注册、`open` 的文本/版本/行尾/BOM/沙箱模式、`save` 的版本校验与冲突回包、工作区外只读与拒写、CRLF+BOM 往返。
 - `artifact.mjs`：按真实方式加载 `lib/client.js`（`window.__ModuleLoader__.load({id, factory})`），检查 id、工厂、导出面、`inject`、后缀，以及**宿主半与浏览器半的 `/api` 前缀一致**（不一致时 UI 只会说"文件服务不可用"）。
 - `browser.mjs`：把 `tests/harness/app.jsx` 打包，用假 `ctx`（slots/locale/documentPreviews/effect）挂载渲染体，`fetch` 拦截到假文件表。覆盖：注册元数据、渲染结果、样式落地、跨块拖选、回车四种位置、Shift+Enter、自动保存的 Markdown、frontmatter 往返、只读文件。
 

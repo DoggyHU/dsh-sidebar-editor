@@ -53,10 +53,18 @@
 ```powershell
 pnpm install
 pnpm build          # esbuild → lib/client.js（单文件，经典脚本 + __ModuleLoader__ 包装）
-pnpm test           # 打包契约（真实 Chromium 加载 lib/client.js）+ 行为（真实 Chromium 驱动渲染体）
+pnpm test           # 宿主半 + 打包契约 + 行为（后两段都在真实 Chromium 里跑）
 ```
 
-`pnpm test` 两段都在真实 Chromium 里跑：jsdom 回答不了"点击能不能落光标、选区能不能跨块、回车到底插了什么、写回的 Markdown 长什么样"。
+`pnpm test` 三段：
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/host.mjs` | 宿主半：`apply()` 真注册 6 条路由、`open`/`save` 的读写、版本冲突、工作区外只读、CRLF 与 BOM 往返 |
+| `tests/artifact.mjs` | 打包契约：按真实方式加载 `lib/client.js`，检查 id / 工厂 / 导出面 / `inject` / 两半 `/api` 前缀一致 |
+| `tests/browser.mjs` | 行为：渲染、样式落地、跨块拖选、四种回车、自动保存写出的 Markdown、frontmatter 往返、只读 |
+
+jsdom 回答不了"点击能不能落光标、选区能不能跨块、回车到底插了什么、写回的 Markdown 长什么样"。
 
 ## 安装到一个 profile
 
