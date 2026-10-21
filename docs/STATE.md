@@ -8,10 +8,12 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.2.0 |
-| 产物 | `lib/client.js` 1066.6 KB（130 个打包包） |
+| 版本 | 0.2.2 |
+| 产物 | `lib/client.js` 1071.8 KB（130 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3（含 `@milkdown/core`、`preset-commonmark`、`preset-gfm`、`plugin/history`、`plugin/listener`、`prose/*`） |
-| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 103 项，全绿；行为套件连跑 3 次稳定 |
+| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 107 项，全绿；行为套件连跑 3 次稳定 |
+| profile | 已挂进 `~/.dsh/profiles/desktop`，是侧栏 `.md` 的唯一渲染实现；旧的 `dsh-sidebar-editor` 已从依赖与 bundles 移除、本地目录已删除（代码与全部标签仍在 https://github.com/DoggyHU/dsh-sidebar-editor ，要回退就 clone 回来加回 profile） |
+| 仓库 | https://github.com/DoggyHU/dsh-sidebar-milkdown （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1`） |
 | profile | 已挂进 `~/.dsh/profiles/desktop`，`dsh-sidebar-editor` **已从 bundles 移除**（依赖项保留，恢复只需一行） |
 
 ### 0.2.0 改了什么（用户四条反馈）
@@ -25,6 +27,7 @@
 | 5 | 保存后文档跳回最上面 | 两处：`replaceBody` 原来把光标钉在文档开头（PM 会把光标滚进视口）→ 改成保持原光标附近；另外用**模块级 `scrollPositions`** 记住每个文件的阅读位置，重建/替换后还原 |
 | 6 | 存过五版之后，切到对话框再保存就报「磁盘已变更」 | 一次手势会同时触发多个保存点（点聊天框 = pointerdown + blur），两次写带着同一个版本号 → 后一次必然冲突。改成**串行队列**（`saveChainRef`），并且冲突回包里如果磁盘字节**正好等于我们这次要写的内容**，就当作成功（stale token，不是真冲突） |
 | 7 | 字体是衬线体 | 0.2.0 用 `font:` 简写 + 令牌，令牌缺一个就整条失效；而且 DSH 的 `--dsw-font-family` 可能只有拉丁字体，中文就落到 Chromium 的**标准字体**（= 宋体）。改成**长写属性** + `--dsh-mk-font-stack`（app family 后面显式追加 `"Microsoft YaHei" / "PingFang SC" / "Noto Sans CJK SC"`），并在客户端上报里记下解析后的 `fontFamily` 与令牌值，写到 `%TEMP%\dsh-sidebar-milkdown-report.json` |
+| 8 | 编辑器底色是灰蓝色，看着割裂 | 原来用官方预览的阅读底色 `--dsw-alias-bg-document-preview`（浅色下是 bluish-100，灰蓝）。改成 **`--dsw-alias-bg-base`**：浅色是 bluish-00（纯白），深色是 bluish-950（近黑），主题切换自动跟随。代价是代码块/表头在浅色下与页面同色，所以给 `pre` 补了一条 hairline 边框 |
 
 ---
 

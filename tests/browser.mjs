@@ -274,6 +274,32 @@ check('typography follows the app Markdown font token', styles.usesMarkdownFonts
 check('headings follow the app heading font tokens', styles.usesHeadingFonts === true);
 check('code follows the app code font token', styles.usesCodeFont === true);
 
+// The surface must be the app's base background, not the preview's tinted reading
+// surface — and it has to follow the theme when the theme changes.
+const surface = await page.evaluate(() => {
+  const root = document.querySelector('.dsh-mk-root');
+  const styleText = document.getElementById('dsh-sidebar-milkdown-style')?.textContent ?? '';
+  const read = () => getComputedStyle(root).backgroundColor;
+  const body = document.body;
+  const before = read();
+  body.style.setProperty('--dsw-alias-bg-base', 'rgb(16, 20, 24)');
+  const dark = read();
+  body.style.setProperty('--dsw-alias-bg-base', 'rgb(255, 255, 255)');
+  const light = read();
+  body.style.removeProperty('--dsw-alias-bg-base');
+  return {
+    before,
+    dark,
+    light,
+    usesBaseToken: styleText.includes('--dsw-alias-bg-base'),
+    usesPreviewTint: styleText.includes('--dsw-alias-bg-document-preview'),
+  };
+});
+check('the surface uses the app base background token', surface.usesBaseToken === true && surface.usesPreviewTint === false, JSON.stringify(surface));
+check('the surface is white in light mode', surface.light === 'rgb(255, 255, 255)', surface.light);
+check('the surface follows dark mode', surface.dark === 'rgb(16, 20, 24)', surface.dark);
+check('the surface defaults to white without a theme', surface.before === 'rgb(255, 255, 255)', surface.before);
+
 // The font situation is written into the report the client sends the host, because a
 // "it still looks wrong" report is otherwise unattributable from outside the app.
 const fontReport = await page.evaluate(() => window.__test.reports.at(-1)?.font ?? null);

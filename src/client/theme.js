@@ -30,11 +30,18 @@ const VARIABLES = `
     --dsh-mk-text: var(--dsw-alias-label-primary, #1f2328);
     --dsh-mk-dim: var(--dsw-alias-label-secondary, #59636e);
     --dsh-mk-faint: var(--dsw-alias-label-tertiary, #818b98);
-    --dsh-mk-bg: var(--dsw-alias-bg-document-preview, #ffffff);
+    /* The app's base surface, not the preview's reading tint: the shipped preview
+       paints documents on bg-document-preview (a grey-blue in light mode), and reusing
+       that made the editor look like a different app sitting inside this one. bg-base is
+       white in light mode and near-black in dark, so the editor reads as the same surface
+       as the rest of DSH and follows the theme. */
+    --dsh-mk-bg: var(--dsw-alias-bg-base, #ffffff);
     --dsh-mk-border: var(--dsw-alias-border-l2, rgba(31, 35, 40, 0.12));
     --dsh-mk-rule: var(--dsw-alias-border-l2, rgba(31, 35, 40, 0.2));
     --dsh-mk-hover: var(--dsw-alias-interactive-bg-hover, rgba(31, 35, 40, 0.06));
     --dsh-mk-active: var(--dsw-alias-interactive-bg-active, rgba(31, 35, 40, 0.1));
+    /* Layer 2 is white in light mode and one step lighter than the page in dark, so
+       code blocks and table headers need a hairline to stay visible in light mode. */
     --dsh-mk-layer: var(--dsw-alias-bg-layer-2, #f6f8fa);
     --dsh-mk-selection: var(--dsw-alias-bg-document-selection, rgba(84, 174, 255, 0.28));
     --dsh-mk-error: var(--dsw-alias-state-error-primary, #cf222e);
@@ -180,7 +187,9 @@ const TYPOGRAPHY = `
 
   .dsh-mk-surface pre {
     margin: 16px 0; padding: 12px 14px; overflow: auto;
-    background: var(--dsh-mk-layer); border-radius: var(--dsw-radius-md, 8px);
+    background: var(--dsh-mk-layer);
+    border: 1px solid var(--dsh-mk-border);
+    border-radius: var(--dsw-radius-md, 8px);
     font-family: var(--dsw-font-markdown-code-font-family, var(--dsh-mk-mono));
     font-size: 0.86em;
     font-weight: 400;

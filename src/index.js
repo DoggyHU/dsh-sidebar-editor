@@ -38,7 +38,7 @@ import { basename, join } from 'node:path';
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
 const ROUTE_PREFIX = '/api/dsh-sidebar-milkdown';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
   process.env.DSH_SIDEBAR_MILKDOWN_REPORT ?? join(tmpdir(), 'dsh-sidebar-milkdown-report.json');
@@ -626,5 +626,6 @@ export function apply(ctx) {
     diagnose(`sandbox: ${describePolicy(fallback)}`);
   });
 }
+
 
 
