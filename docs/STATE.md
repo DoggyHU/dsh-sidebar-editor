@@ -29,7 +29,7 @@
 | 环境变量 | `DSH_SIDEBAR_MILKDOWN_*` | **`DSH_SIDEBAR_EDITOR_*`** |
 | 本地目录 | `…\dsh-sidebar-milkdown` | **`…\dsh-sidebar-editor`** |
 
-旧插件（同名 1.0.x，渲染块 + contenteditable 那条路线）的 GitHub 仓库已删名并归档、本地只剩 `_backup\repos-20261022\` 里的 mirror + bundle。它原本的 1.0.x 版本号作废，新的 1.0.0 由这一版继承——所以"1.0.x"现在只有一条线。
+旧插件（同名 1.0.x，渲染块 + contenteditable 那条路线）的 GitHub 仓库**已彻底删除**（先改名为 `dsh-sidebar-editor-retired` 归档，再由用户手动删除）；本地也已无副本，唯一留存是 `_backup\repos-20261022\` 里的 mirror + bundle。它原本的 1.0.x 版本号作废，新的 1.0.0 由这一版继承——所以"1.0.x"现在只有一条线。
 
 ### 0.2.0 改了什么（用户四条反馈）
 
