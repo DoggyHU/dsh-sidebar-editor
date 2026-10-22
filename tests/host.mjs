@@ -148,10 +148,10 @@ apply(ctx);
 // ── 1. it mounted ───────────────────────────────────────────────────────────
 console.log('mount');
 const expectedRoutes = ['ping', 'probe', 'open', 'save', 'report', 'diag'].map(
-  (endpoint) => `/api/dsh-sidebar-milkdown/${endpoint}`,
+  (endpoint) => `/api/dsh-sidebar-editor/${endpoint}`,
 );
 check('registered every route', expectedRoutes.every((path) => routes.has(path)), [...routes.keys()].join(', '));
-check('no route outside the plugin prefix', [...routes.keys()].every((path) => path.startsWith('/api/dsh-sidebar-milkdown/')));
+check('no route outside the plugin prefix', [...routes.keys()].every((path) => path.startsWith('/api/dsh-sidebar-editor/')));
 
 /**
  * Call one route the way the webserver would.
@@ -160,9 +160,9 @@ check('no route outside the plugin prefix', [...routes.keys()].every((path) => p
  * @returns the decoded response body.
  */
 async function call(endpoint, payload) {
-  const route = routes.get(`/api/dsh-sidebar-milkdown/${endpoint}`);
+  const route = routes.get(`/api/dsh-sidebar-editor/${endpoint}`);
   if (route === undefined) throw new Error(`no route for ${endpoint}`);
-  const request = new Request(`http://localhost/api/dsh-sidebar-milkdown/${endpoint}`, {
+  const request = new Request(`http://localhost/api/dsh-sidebar-editor/${endpoint}`, {
     method: 'POST',
     body: JSON.stringify(payload ?? {}),
     headers: { 'content-type': 'application/json' },
@@ -174,7 +174,7 @@ async function call(endpoint, payload) {
 // ── 2. ping / probe ─────────────────────────────────────────────────────────
 console.log('diagnostics');
 const ping = await call('ping', {});
-check('ping answers the plugin name', ping.ok === true && ping.plugin === 'dsh-sidebar-milkdown', JSON.stringify(ping));
+check('ping answers the plugin name', ping.ok === true && ping.plugin === 'dsh-sidebar-editor', JSON.stringify(ping));
 const probe = await call('probe', {});
 check('probe reports the filesystem', probe.services?.fs?.present === true, JSON.stringify(probe).slice(0, 200));
 check('probe reports the sandbox policy', probe.services?.sandboxPolicy?.present === true);

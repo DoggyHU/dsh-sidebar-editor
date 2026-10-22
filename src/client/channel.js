@@ -10,7 +10,7 @@
  * `connection.rpc.handle` is unusable in this build — see the host half's `apply`
  * for the mechanism and what it costs to discover that the hard way.
  */
-export const ROUTE_PREFIX = '/api/dsh-sidebar-milkdown';
+export const ROUTE_PREFIX = '/api/dsh-sidebar-editor';
 
 /**
  * The URL of one endpoint.

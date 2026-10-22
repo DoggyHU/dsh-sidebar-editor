@@ -9,5 +9,5 @@
 # File reading and writing still ride dsh-sidebar-editor's authenticated routes
 # for now (see README "phase 2"); that plugin must therefore stay mounted.
 - insert:
-    - id: sidebar-milkdown
-      name: 'dsh-sidebar-milkdown'
+    - id: sidebar-editor
+      name: 'dsh-sidebar-editor'

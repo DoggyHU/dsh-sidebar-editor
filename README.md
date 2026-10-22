@@ -1,18 +1,23 @@
-# dsh-sidebar-milkdown
+# dsh-sidebar-editor
 
-给 **DSH 桌面版**侧边栏文档预览增加一个 **ProseMirror（Milkdown）渲染式 Markdown 编辑器**的新插件。
+给 **DSH 桌面版**侧边栏的文档预览加两个**可编辑**视图：Markdown 走 ProseMirror（Milkdown）的渲染式编辑，代码与纯文本走 CodeMirror 6。两个视图共用一套读写通道和同一套保存语义。
 
-它不是旧插件 `dsh-sidebar-editor` 的补丁，而是**换掉底层思路**的另一条路线：
+**版本 1.0.0** · 状态、决策与已知边界见 [docs/STATE.md](docs/STATE.md)
 
-| | 旧路线 `dsh-sidebar-editor` | 新路线 `dsh-sidebar-milkdown` |
+## 名字与来历
+
+这个仓库以前叫 `dsh-sidebar-milkdown`（0.1.0–0.3.0），从一个只管 Markdown 的 ProseMirror 编辑器长成了"富文本 + 源码"双视图的编辑器，所以在 1.0.0 改成现在的名字。
+
+更早还有一版 `dsh-sidebar-editor`（1.0.x），做法是把每个块画成 React 组件、再让浏览器 `contenteditable` 直接编辑渲染结果。那条路线被淘汰了：写回时静默吞块、tile 崩溃白屏、选区不跨块，这些都是那套"三个主人管一片 DOM"的结构性后果。**它的仓库已经删除**，名字由这一版接手；想对照历史只能看本地 `_backup` 里的 git bundle。
+
+| | 旧路线（已退役） | 现在这一版 |
 |---|---|---|
 | 文档模型 | CodeMirror 6 的字符串 + 每块一个 React 渲染 + 浏览器 `contenteditable` | **ProseMirror 的一个文档模型 + 一个视图** |
 | 同一片 DOM 的主人 | 三个（CM 的偏移、React 树、浏览器光标/输入法） | 一个 |
-| 换行 | 插件自己切 DOM（v1.0.11 的块内分段） | 编辑器自己的 `splitBlock`，光标不移动 |
-| 跨段落选区 | 不支持（用户已接受） | **原生支持** |
+| 换行 | 插件自己切 DOM | 编辑器自己的 `splitBlock`，光标不移动 |
+| 跨段落选区 | 不支持 | **原生支持** |
 | Markdown 读写 | 自己写的 HTML→Markdown 序列化 | remark（`remark-parse`/`remark-stringify`，GFM 由 `remark-gfm`） |
-
-**版本 0.3.0** · 状态、决策与已知边界见 [docs/STATE.md](docs/STATE.md)
+| 代码文件 | 只有只读的官方「代码」视图，或旧插件的 CodeMirror | **可编辑 CodeMirror 视图**（本插件第三/四个注册条目） |
 
 ## 它做什么
 
@@ -20,7 +25,7 @@
 
 | 项 | 富文本视图 | 代码视图（可编辑） | 代码视图（不抢默认） |
 |---|---|---|---|
-| 实现 id | `dsh-sidebar-milkdown` | `dsh-sidebar-milkdown-code` | `dsh-sidebar-milkdown-code-shipped` |
+| 实现 id | `dsh-sidebar-editor` | `dsh-sidebar-editor-code` | `dsh-sidebar-editor-code-shipped` |
 | 认领后缀 | `.md` `.markdown` | 官方代码表 115 个后缀中除下栏的（含 `.md`） | `.html` `.htm` `.svg` `.csv` |
 | 优先级 | `'preferred'` | `'preferred'` | `'builtin'`（和官方同档，靠官方先注册所以官方仍是默认） |
 | 何时是默认 | `.md`（同档同长度靠注册顺序排第一） | `.py` `.js` `.json` `.yaml` 等源码文件（压过官方只读「代码」视图） | 不抢：官方 HTML 预览 / 图片 / 表格视图保持默认 |
@@ -34,7 +39,7 @@
 
 | 时机 | 行为 |
 |---|---|
-| 打开 | POST `/api/dsh-sidebar-milkdown/open` 拿正文 + `version`（新鲜的版本号） |
+| 打开 | POST `/api/dsh-sidebar-editor/open` 拿正文 + `version`（新鲜的版本号） |
 | 编辑 | ProseMirror 事务，不碰文件 |
 | **停下不保存** | **没有"停手 N 毫秒自动保存"**——定时器会在你打中文打到一半时动手，是输入法被打断的根源 |
 | `Ctrl/Cmd+S` | 立即写回（带 `baseVersion` 版本校验） |
@@ -69,7 +74,7 @@
 
 ## 代码视图（CodeMirror 6）
 
-`src/client/codemirror/` 这一块从退役的 `dsh-sidebar-editor` 搬来，只保留纯文本编辑器部分：
+`src/client/codemirror/` 这一块从已退役的旧插件搬来，只保留纯文本编辑器部分：
 
 | 文件 | 作用 |
 |---|---|
@@ -86,12 +91,12 @@
 
 ## 宿主半（host）
 
-`src/index.js` 是宿主半，注册 `/api/dsh-sidebar-milkdown/{ping,probe,open,save,report,diag}`。
+`src/index.js` 是宿主半，注册 `/api/dsh-sidebar-editor/{ping,probe,open,save,report,diag}`。
 读写走官方文件服务 `ctx.fs.writeText(target, text, { kind: 'replaceIfVersion', version })`，因此：
 
 - 版本冲突是 `FS_STALE_VERSION`，不会静默覆盖别人的修改；
 - 沙箱策略（`ctx.sandboxPolicy`）随会话解析，`read-only` / 工作区外会被拒；
-- 记账文件：`%TEMP%\dsh-sidebar-milkdown-host.log`（加载与失败痕迹）、`%TEMP%\dsh-sidebar-milkdown-report.json`（浏览器半上报的排序结果）。
+- 记账文件：`%TEMP%\dsh-sidebar-editor-host.log`（加载与失败痕迹）、`%TEMP%\dsh-sidebar-editor-report.json`（浏览器半上报的排序结果）。
 
 **先写后读有两层**：客户端 `src/client/write-queue.js` 按地址排队（写完才允许读，读之前 `await whenIdle`），宿主半 `serialisedByAddress` 再兜一层。切换视图时"旧视图的最后一笔写"一定排在新视图的读之前——只有"一个插件、一个 bundle、一个宿主半"才做得到这件事。
 
@@ -119,8 +124,8 @@ jsdom 回答不了"点击能不能落光标、选区能不能跨块、回车到�
 
 ```jsonc
 // ~/.dsh/profiles/desktop/package.json
-"dependencies": { "dsh-sidebar-milkdown": "link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-milkdown" },
-"dsh": { "profile": { "bundles": [ /* … */ "dsh-sidebar-milkdown" ] } }
+"dependencies": { "dsh-sidebar-editor": "link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor" },
+"dsh": { "profile": { "bundles": [ /* … */ "dsh-sidebar-editor" ] } }
 ```
 
 ```powershell
@@ -129,7 +134,7 @@ cd ~/.dsh/profiles/desktop; pnpm install
 
 然后**重启 DSH**（宿主半是新增行，必须重启）；只改客户端时 `Ctrl+Shift+R` 即可。
 
-## 已知边界（0.3.0）
+## 已知边界（1.0.0）
 
 - **空段落不保留**：Milkdown 默认把空段落写成 `<br />`，而官方预览不渲染裸 HTML，重开就会看到字面 `<br />`。本插件移除了那个插件，所以空行在保存后消失（空段落没有 Markdown 表示）。
 - **软换行合并**：一段里用软换行折行的两行，解析成一个段落的两行文本；保存后合成一行。这是 Markdown 的本来语义。

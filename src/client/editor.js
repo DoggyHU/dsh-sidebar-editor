@@ -162,7 +162,7 @@ export async function mountMilkdown({ root, markdown, editable = true, onChange,
         // to read-only, and the view has to follow without a remount.
         editable: () => mountedEditable,
         attributes: {
-          class: 'dsh-mk-prose dsh-mk-surface',
+          class: 'dsh-se-prose dsh-se-surface',
           spellcheck: 'false',
           autocapitalize: 'off',
           autocorrect: 'off',
@@ -292,7 +292,7 @@ export function replaceBody(editor, markdown) {
   } catch (error) {
     // A reload that cannot be applied is worth seeing: silence here means a document
     // that quietly stops following the file.
-    console.error('[dsh-sidebar-milkdown] replacing the document failed', error);
+    console.error('[dsh-sidebar-editor] replacing the document failed', error);
     return false;
   }
 }

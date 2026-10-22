@@ -1,4 +1,4 @@
-# 状态与决策（0.3.0，2026-10-22 下午）
+# 状态与决策（1.0.0，2026-10-22 下午）
 
 这份文件记录"为什么这么做"和"踩过什么坑"，避免下一次会话重新推导一遍。
 
@@ -8,13 +8,28 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.3.0（**两个视图**：富文本 + 源码） |
-| 产物 | `lib/client.js` 2756.1 KB（171 个打包包） |
+| 版本 | 1.0.0（**两个视图**：富文本 + 源码；名字从 `dsh-sidebar-milkdown` 改成 `dsh-sidebar-editor`） |
+| 产物 | `lib/client.js` 重建后见构建输出（改名前一版 2756.1 KB，171 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
 | 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 150 项，全绿 |
-| profile | 已挂进 `~/.dsh/profiles/desktop`（`link:`），`bundles` 里只有本插件；旧 `dsh-sidebar-editor` 已移除、本地目录已删除（代码与全部标签仍在 https://github.com/DoggyHU/dsh-sidebar-editor ） |
-| 仓库 | https://github.com/DoggyHU/dsh-sidebar-milkdown （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1` / `v0.2.2` / `v0.3.0`） |
-| 回退 | 想要回 0.2.2 的单一富文本视图：`git checkout v0.2.2 -- src lib && pnpm build`；动手前的磁盘快照在 `_backup\dsh-sidebar-milkdown-0.2.2-20261022` |
+| profile | 已挂进 `~/.dsh/profiles/desktop`（`link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor`），`bundles` 里只有本插件 |
+| 仓库 | https://github.com/DoggyHU/dsh-sidebar-editor （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1` / `v0.2.2` / `v0.3.0` / `v1.0.0`） |
+| 回退 | 想要回 0.2.2 的单一富文本视图：`git checkout v0.2.2 -- src lib && pnpm build`；0.3.0 的"三个条目、两视图"是 `v0.3.0`；改名前的磁盘快照在 `_backup\dsh-sidebar-milkdown-0.2.2-20261022` |
+
+### 1.0.0 做了什么：改名 + 接任 `dsh-sidebar-editor`
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 包名 / 实现 id | `dsh-sidebar-milkdown` | **`dsh-sidebar-editor`**（另有 `-code` / `-code-shipped`） |
+| 路由前缀 | `/api/dsh-sidebar-milkdown` | **`/api/dsh-sidebar-editor`** |
+| cordis bundle 行 | `sidebar-milkdown` | **`sidebar-editor`** |
+| locale 命名空间 | `dshSidebarMilkdown` | **`dshSidebarEditor`** |
+| CSS 前缀 | `--dsh-mk-*` / `.dsh-mk-*` | **`--dsh-se-*` / `.dsh-se-*`** |
+| 日志 / 报告 | `%TEMP%\dsh-sidebar-milkdown-*` | **`%TEMP%\dsh-sidebar-editor-*`** |
+| 环境变量 | `DSH_SIDEBAR_MILKDOWN_*` | **`DSH_SIDEBAR_EDITOR_*`** |
+| 本地目录 | `…\dsh-sidebar-milkdown` | **`…\dsh-sidebar-editor`** |
+
+旧插件（同名 1.0.x，渲染块 + contenteditable 那条路线）的 GitHub 仓库已删名并归档、本地只剩 `_backup\repos-20261022\` 里的 mirror + bundle。它原本的 1.0.x 版本号作废，新的 1.0.0 由这一版继承——所以"1.0.x"现在只有一条线。
 
 ### 0.2.0 改了什么（用户四条反馈）
 
@@ -26,7 +41,7 @@
 | 4 | 字体不跟随 DSH 设置 | 排版整段照抄官方 `._markdown_*` 规则，用 `--dsw-font-markdown-*` 令牌，改设置时一起变 |
 | 5 | 保存后文档跳回最上面 | 两处：`replaceBody` 原来把光标钉在文档开头（PM 会把光标滚进视口）→ 改成保持原光标附近；另外用**模块级 `scrollPositions`** 记住每个文件的阅读位置，重建/替换后还原 |
 | 6 | 存过五版之后，切到对话框再保存就报「磁盘已变更」 | 一次手势会同时触发多个保存点（点聊天框 = pointerdown + blur），两次写带着同一个版本号 → 后一次必然冲突。改成**串行队列**（`saveChainRef`），并且冲突回包里如果磁盘字节**正好等于我们这次要写的内容**，就当作成功（stale token，不是真冲突） |
-| 7 | 字体是衬线体 | 0.2.0 用 `font:` 简写 + 令牌，令牌缺一个就整条失效；而且 DSH 的 `--dsw-font-family` 可能只有拉丁字体，中文就落到 Chromium 的**标准字体**（= 宋体）。改成**长写属性** + `--dsh-mk-font-stack`（app family 后面显式追加 `"Microsoft YaHei" / "PingFang SC" / "Noto Sans CJK SC"`），并在客户端上报里记下解析后的 `fontFamily` 与令牌值，写到 `%TEMP%\dsh-sidebar-milkdown-report.json` |
+| 7 | 字体是衬线体 | 0.2.0 用 `font:` 简写 + 令牌，令牌缺一个就整条失效；而且 DSH 的 `--dsw-font-family` 可能只有拉丁字体，中文就落到 Chromium 的**标准字体**（= 宋体）。改成**长写属性** + `--dsh-se-font-stack`（app family 后面显式追加 `"Microsoft YaHei" / "PingFang SC" / "Noto Sans CJK SC"`），并在客户端上报里记下解析后的 `fontFamily` 与令牌值，写到 `%TEMP%\dsh-sidebar-editor-report.json` |
 | 8 | 编辑器底色是灰蓝色，看着割裂 | 原来用官方预览的阅读底色 `--dsw-alias-bg-document-preview`（浅色下是 bluish-100，灰蓝）。改成 **`--dsw-alias-bg-base`**：浅色是 bluish-00（纯白），深色是 bluish-950（近黑），主题切换自动跟随。代价是代码块/表头在浅色下与页面同色，所以给 `pre` 补了一条 hairline 边框 |
 
 ---
@@ -41,7 +56,7 @@
 
 v1.0.11 把症状压住了（回车只在块内切 DOM、不 dispatch、不搬焦点；写回攒批并在 dispatch 时才解析范围），但每一类 bug 都出自这个结构。ProseMirror 是"一个模型 + 一个视图"，输入法、跨段落选区、回车、写回都由编辑器自己保证，插件只需读写 Markdown。
 
-**新插件不改旧插件**：旧目录是"能用"的基线，一行没动。
+**当时刻意不改旧插件**：旧目录被当成"能用"的基线，一行没动；它现在已整体退役并被删除。
 
 ---
 
@@ -56,7 +71,7 @@ rank = priority === 'builtin' ? 0 : 1
 sort: rank 降序 → 匹配后缀长度降序 → 注册顺序升序
 ```
 
-所以 `'preferred'` 一定排在官方 `builtin` 前，成为 `.md` 默认视图；两个 `'preferred'` 之间由**注册顺序**决定——这就是为什么旧插件必须从 bundles 移除：它自己也注册了一个 `'preferred'` 的 md 渲染器，且先注册。
+所以 `'preferred'` 一定排在官方 `builtin` 前，成为 `.md` 默认视图；两个 `'preferred'` 之间由**注册顺序**决定——这也是当时必须把旧插件从 bundles 移除的原因：它自己也注册了一个 `'preferred'` 的 md 渲染器，且先注册。
 
 ### 3.2 保存只有一个理由：用户做完了
 
@@ -127,13 +142,13 @@ const COMMONMARK = commonmark.filter((p) => !EMPTY_LINE_PLUGINS.has(p));
 1. `font: var(--token)` 是**简写**：令牌缺失时整条声明失效，回退到继承/浏览器默认；
 2. `--dsw-font-family` 若只有拉丁字体，中文没有字形，Chromium 用**标准字体**兜底，而标准字体是衬线（宋体）。
 
-所以 `.dsh-mk-surface` 用长写属性（`font-family` / `font-size` / `font-weight` / `line-height`，
-分别对应主题的 `--dsw-font-markdown-base-font-*`），且 `--dsh-mk-font-stack` 在 app family 之后显式追加
+所以 `.dsh-se-surface` 用长写属性（`font-family` / `font-size` / `font-weight` / `line-height`，
+分别对应主题的 `--dsw-font-markdown-base-font-*`），且 `--dsh-se-font-stack` 在 app family 之后显式追加
 `"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif`。app 自己的 family 里有 CJK 时它优先，
 所以"跟随设置"没有被破坏。
 
 排查手段：客户端把解析后的 `fontFamily` 和主题令牌值写进上报，落盘在
-`%TEMP%\dsh-sidebar-milkdown-report.json` 的 `font` 字段——真机再出现"看着不对"，读这个文件即可，不用猜。
+`%TEMP%\dsh-sidebar-editor-report.json` 的 `font` 字段——真机再出现"看着不对"，读这个文件即可，不用猜。
 
 ### 3.9 回车语义
 
@@ -171,7 +186,7 @@ Milkdown 的往返是规范化的，所以底稿 `baseline = readMarkdown(在刚
 
 ### 3.7 样式表必须放在规则里
 
-`src/client/theme.js` 的 CSS 变量块必须以 `.dsh-mk-root { … }` 开头。**顶层写 `--x: y;` 不是合法规则，整张表会被丢弃**，症状是"边框、代码块底色、引用条全没了，而且没有任何报错"。测试里有一组读 `getComputedStyle` 的断言专门盯这个（`stylesheet was not dropped`、`code block has a background`、`table cells have a border`）。
+`src/client/theme.js` 的 CSS 变量块必须以 `.dsh-se-root { … }` 开头。**顶层写 `--x: y;` 不是合法规则，整张表会被丢弃**，症状是"边框、代码块底色、引用条全没了，而且没有任何报错"。测试里有一组读 `getComputedStyle` 的断言专门盯这个（`stylesheet was not dropped`、`code block has a background`、`table cells have a border`）。
 
 ---
 
@@ -235,7 +250,7 @@ if (editable && !editable.hasAttribute('data-dshq-annotate')) return hide()
 
 ## 七、操作纪律
 
-- 别为了新插件去改 `dsh-sidebar-editor`（它是对照基线）。
+- 旧插件（1.0.x 那条渲染块路线）已删除，不要试图复活它：它的死因是结构性的（写回吞块、tile 崩溃），本仓库只搬了它的纯文本编辑器部分。
 - 没得到明确指令不要推 GitHub（`dsh-sidebar-editor` 已推到 `DoggyHU/dsh-sidebar-editor`；本插件只在本地）。
 - 改代码后必须 `pnpm test`（两段都是浏览器级），再 `pnpm build`。
 
@@ -257,14 +272,14 @@ if (editable && !editable.hasAttribute('data-dshq-annotate')) return hide()
 ### 8.2 形状：一个插件、三次注册（两个视图）
 
 ```
-id = dsh-sidebar-milkdown                ext = md,markdown      preferred   body = MilkdownBody
-id = dsh-sidebar-milkdown-code           ext = 115 后缀减 4     preferred   body = SourceBody
-id = dsh-sidebar-milkdown-code-shipped   ext = html,htm,svg,csv builtin     body = SourceBody（同一个组件，另一个 slot key）
+id = dsh-sidebar-editor                ext = md,markdown      preferred   body = MilkdownBody
+id = dsh-sidebar-editor-code           ext = 115 后缀减 4     preferred   body = SourceBody
+id = dsh-sidebar-editor-code-shipped   ext = html,htm,svg,csv builtin     body = SourceBody（同一个组件，另一个 slot key）
 ```
 
 rank 只看 `priority === 'builtin' ? 0 : 1`，所以前两个是第 1 档；`.md` 上两者后缀长度相同，**靠注册顺序**决定谁是 `candidates[0]`。
 → 三次 `register` 必须写在**同一个 `ctx.effect` 里、富文本在前**（拆成多个 effect 就等于把默认视图交给打包/加载顺序）。
-`reportToHost` 会把 `probe.md` / `probe.py` / `probe.html` / `probe.svg` / `probe.csv` 的 `candidates()` 顺序一起上报到 `%TEMP%\dsh-sidebar-milkdown-report.json`，排序错了能查（测试里也断言了这三条的期望值）。
+`reportToHost` 会把 `probe.md` / `probe.py` / `probe.html` / `probe.svg` / `probe.csv` 的 `candidates()` 顺序一起上报到 `%TEMP%\dsh-sidebar-editor-report.json`，排序错了能查（测试里也断言了这三条的期望值）。
 
 **为什么第三个条目必须存在**：一个实现只有一个优先级档，而 `.html`/`.svg`/`.csv` 是产品自己渲染得更好的（页面 / 图片 / 表格）。
 如果把它们放进第 1 档，`.svg` 会默认以文本打开、`.csv` 会丢掉表格视图 —— 那不是"编辑代码"，是退化。

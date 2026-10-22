@@ -49,7 +49,7 @@ writeFileSync(
   pageHtml,
   `<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><title>dsh-sidebar-milkdown harness</title>
+<head><meta charset="utf-8"><title>dsh-sidebar-editor harness</title>
 <style>html,body,#host{height:100%;margin:0}#host{width:640px}</style>
 </head>
 <body>
@@ -123,7 +123,7 @@ async function openDoc(address, text, options, expect) {
  */
 async function openCode(address, text, options, expect) {
   await page.evaluate(
-    ([a, t, o]) => window.__test.open(a, t, { ...o, impl: 'dsh-sidebar-milkdown-code' }),
+    ([a, t, o]) => window.__test.open(a, t, { ...o, impl: 'dsh-sidebar-editor-code' }),
     [address, text, options ?? {}],
   );
   try {
@@ -212,9 +212,9 @@ const definitions = await page.evaluate(() =>
 );
 const registration = definitions[0];
 check('registers three entries', definitions.length === 3, JSON.stringify(definitions.map((one) => one.id)));
-check('the rich text view is registered first', registration?.id === 'dsh-sidebar-milkdown', registration?.id);
-check('the code surface is registered second', definitions[1]?.id === 'dsh-sidebar-milkdown-code', definitions[1]?.id);
-check('the shipped-band code entry is third', definitions[2]?.id === 'dsh-sidebar-milkdown-code-shipped', definitions[2]?.id);
+check('the rich text view is registered first', registration?.id === 'dsh-sidebar-editor', registration?.id);
+check('the code surface is registered second', definitions[1]?.id === 'dsh-sidebar-editor-code', definitions[1]?.id);
+check('the shipped-band code entry is third', definitions[2]?.id === 'dsh-sidebar-editor-code-shipped', definitions[2]?.id);
 check('claims md and markdown', JSON.stringify(registration?.extensions) === JSON.stringify(['md', 'markdown']));
 check('the two editable entries sit above builtin', registration?.priority === 'preferred' && definitions[1]?.priority === 'preferred', JSON.stringify(definitions.map((one) => one.priority)));
 check('the shipped-band entry does not', definitions[2]?.priority === 'builtin', definitions[2]?.priority);
@@ -227,9 +227,9 @@ check('the rich text title is bound from the locale', registration?.title === '�
 check('the code title is bound from the locale', definitions[1]?.title === '源代码', definitions[1]?.title);
 const probeRankings = await page.evaluate(() => window.__test.reports.at(-1)?.ranking ?? null);
 check('the client reported the ranking it resolved', probeRankings !== null, JSON.stringify(probeRankings));
-check('markdown ranks rich text, then source', JSON.stringify(probeRankings?.['probe.md']) === JSON.stringify(['dsh-sidebar-milkdown', 'dsh-sidebar-milkdown-code']), JSON.stringify(probeRankings?.['probe.md']));
-check('a source file ranks the editable surface first', JSON.stringify(probeRankings?.['probe.py']) === JSON.stringify(['dsh-sidebar-milkdown-code']), JSON.stringify(probeRankings?.['probe.py']));
-check('an html file ranks only the shipped-band entry', JSON.stringify(probeRankings?.['probe.html']) === JSON.stringify(['dsh-sidebar-milkdown-code-shipped']), JSON.stringify(probeRankings?.['probe.html']));
+check('markdown ranks rich text, then source', JSON.stringify(probeRankings?.['probe.md']) === JSON.stringify(['dsh-sidebar-editor', 'dsh-sidebar-editor-code']), JSON.stringify(probeRankings?.['probe.md']));
+check('a source file ranks the editable surface first', JSON.stringify(probeRankings?.['probe.py']) === JSON.stringify(['dsh-sidebar-editor-code']), JSON.stringify(probeRankings?.['probe.py']));
+check('an html file ranks only the shipped-band entry', JSON.stringify(probeRankings?.['probe.html']) === JSON.stringify(['dsh-sidebar-editor-code-shipped']), JSON.stringify(probeRankings?.['probe.html']));
 
 // ── 2. it rendered the document ──────────────────────────────────────────────
 console.log('rendering');
@@ -286,17 +286,17 @@ check('opening a file writes nothing', savedAfterOpen === 0, `saves: ${savedAfte
 // the only way that class of failure is visible.
 console.log('styles');
 const styles = await page.evaluate(() => {
-  const root = document.querySelector('.dsh-mk-root');
+  const root = document.querySelector('.dsh-se-root');
   const editor = document.querySelector('.ProseMirror');
   const pre = document.querySelector('.ProseMirror pre');
   const cell = document.querySelector('.ProseMirror td, .ProseMirror th');
   const quote = document.querySelector('.ProseMirror blockquote');
-  const styleTag = document.getElementById('dsh-sidebar-milkdown-style');
+  const styleTag = document.getElementById('dsh-sidebar-editor-style');
   const cssText = styleTag?.textContent ?? '';
   return {
     injected: styleTag !== null,
     ruleCount: styleTag === null ? 0 : styleTag.sheet?.cssRules?.length ?? 0,
-    tokenText: root === null ? '' : getComputedStyle(root).getPropertyValue('--dsh-mk-text').trim(),
+    tokenText: root === null ? '' : getComputedStyle(root).getPropertyValue('--dsh-se-text').trim(),
     fontSize: editor === null ? '' : getComputedStyle(editor).fontSize,
     preBackground: pre === null ? '' : getComputedStyle(pre).backgroundColor,
     cellBorder: cell === null ? '' : getComputedStyle(cell).borderBottomStyle,
@@ -326,8 +326,8 @@ check('code follows the app code font token', styles.usesCodeFont === true);
 // The surface must be the app's base background, not the preview's tinted reading
 // surface — and it has to follow the theme when the theme changes.
 const surface = await page.evaluate(() => {
-  const root = document.querySelector('.dsh-mk-root');
-  const styleText = document.getElementById('dsh-sidebar-milkdown-style')?.textContent ?? '';
+  const root = document.querySelector('.dsh-se-root');
+  const styleText = document.getElementById('dsh-sidebar-editor-style')?.textContent ?? '';
   const read = () => getComputedStyle(root).backgroundColor;
   const body = document.body;
   const before = read();
@@ -455,7 +455,7 @@ check('save carries a base version', typeof savedSample?.baseVersion === 'string
 const afterSave = await page.evaluate(() => ({
   sameNode: window.__test.proseMirror() === window.__proseMirrorBeforeSave,
   focused: document.activeElement?.classList.contains('ProseMirror') === true,
-  saved: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+  saved: document.querySelector('.dsh-se-foot-state')?.textContent ?? '',
 }));
 check('saving kept the same editor node', afterSave.sameNode === true);
 check('saving kept the caret in the editor', afterSave.focused === true, afterSave.saved);
@@ -470,7 +470,7 @@ if (process.env.DUMP === '1') {
           const host = [...document.querySelectorAll('div')].find((element) => element.dshMilkdownView !== undefined);
           const view = host?.dshMilkdownView;
           return {
-            status: document.querySelector('.dsh-mk-foot-state')?.textContent ?? null,
+            status: document.querySelector('.dsh-se-foot-state')?.textContent ?? null,
             docTail: view?.state.doc.textContent?.slice(-16) ?? null,
             domTail: (document.querySelector('.ProseMirror')?.textContent ?? '').slice(-16),
             viewMatchesDom: view?.dom === document.querySelector('.ProseMirror'),
@@ -483,14 +483,14 @@ if (process.env.DUMP === '1') {
 }
 const afterMoreTyping = await page.evaluate(() => ({
   text: document.querySelector('.ProseMirror')?.textContent ?? '',
-  saved: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+  saved: document.querySelector('.dsh-se-foot-state')?.textContent ?? '',
 }));
 check('typing after a save still lands in the document', afterMoreTyping.text.includes('继续输入'), afterMoreTyping.text.slice(-40));
 check('typing after a save marks the buffer unsaved', afterMoreTyping.saved.includes('未保存'), afterMoreTyping.saved);
 
 // Clicking outside the editor is the "I am done with this document" gesture the old
 // plugin flushed on (clicking the chat box, switching conversation).
-await page.locator('.dsh-mk-foot-path').click();
+await page.locator('.dsh-se-foot-path').click();
 await page.waitForTimeout(300);
 check('clicking outside the editor saves', (await page.evaluate(() => window.__test.saved.length)) === 2);
 
@@ -539,7 +539,7 @@ await page.evaluate(() => window.__test.bumpRevision());
 await page.waitForTimeout(500);
 const afterDirtyExternal = await page.evaluate(() => ({
   text: document.querySelector('.ProseMirror')?.textContent ?? '',
-  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
+  notice: document.querySelector('.dsh-se-notice')?.getAttribute('data-kind') ?? null,
 }));
 check('an external change while dirty keeps the buffer', afterDirtyExternal.text.includes('（我的修改）'), afterDirtyExternal.text.slice(-40));
 check('an external change while dirty shows the strip', afterDirtyExternal.notice === 'external', afterDirtyExternal.notice);
@@ -554,11 +554,11 @@ await openDoc('dsh-resource://file/session/test/scroll.md', longDocument, { name
 await placeCaretAfter('第 1 行内容');
 await page.keyboard.type('改一下');
 await page.evaluate(() => {
-  const scroll = document.querySelector('.dsh-mk-scroll');
+  const scroll = document.querySelector('.dsh-se-scroll');
   if (scroll !== null) scroll.scrollTop = 420;
 });
 await page.waitForTimeout(150);
-const scrolledBefore = await page.evaluate(() => document.querySelector('.dsh-mk-scroll')?.scrollTop ?? -1);
+const scrolledBefore = await page.evaluate(() => document.querySelector('.dsh-se-scroll')?.scrollTop ?? -1);
 await page.evaluate(() => {
   window.__scrollNode = window.__test.proseMirror();
 });
@@ -567,7 +567,7 @@ await page.keyboard.press('Control+s');
 await page.waitForTimeout(800);
 await page.evaluate(() => window.__test.setOwnerReloadsOnSave(false));
 const scrolledAfter = await page.evaluate(() => ({
-  top: document.querySelector('.dsh-mk-scroll')?.scrollTop ?? -1,
+  top: document.querySelector('.dsh-se-scroll')?.scrollTop ?? -1,
   sameNode: window.__test.proseMirror() === window.__scrollNode,
   text: document.querySelector('.ProseMirror')?.textContent?.includes('改一下') === true,
 }));
@@ -590,12 +590,12 @@ const savesBeforeRace = await page.evaluate(() => window.__test.saved.length);
 // ours: the editor must treat that as success, not as「磁盘已变更」.
 await page.evaluate((value) => window.__test.armConflict(value), '# 竞态\n\n正文A。\n');
 await page.keyboard.press('Control+s');
-await page.locator('.dsh-mk-foot-path').click();
+await page.locator('.dsh-se-foot-path').click();
 await page.waitForTimeout(500);
 const afterRace = await page.evaluate((addr) => ({
   adds: window.__test.saved.length,
-  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
-  state: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+  notice: document.querySelector('.dsh-se-notice')?.getAttribute('data-kind') ?? null,
+  state: document.querySelector('.dsh-se-foot-state')?.textContent ?? '',
   disk: window.__test.files.get(addr)?.text ?? '',
 }), raceAddress);
 check('a stale-token conflict whose bytes are ours is not shown as a conflict', afterRace.notice === null, afterRace.notice);
@@ -610,19 +610,19 @@ await page.evaluate(() => window.__test.armConflict('# 别人改的\n'));
 await page.keyboard.press('Control+s');
 await page.waitForTimeout(400);
 const realConflict = await page.evaluate(() => ({
-  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
-  state: document.querySelector('.dsh-mk-foot-state')?.textContent ?? '',
+  notice: document.querySelector('.dsh-se-notice')?.getAttribute('data-kind') ?? null,
+  state: document.querySelector('.dsh-se-foot-state')?.textContent ?? '',
   text: document.querySelector('.ProseMirror')?.textContent ?? '',
 }));
 check('a real conflict is shown', realConflict.notice === 'conflict', realConflict.notice);
 check('a real conflict keeps the buffer', realConflict.text.includes('正文AB'), realConflict.text.slice(-20));
 check('a real conflict marks the strip', realConflict.state.includes('磁盘已变更'), realConflict.state);
 const savesBeforeOverwrite = await page.evaluate(() => window.__test.saved.length);
-await page.locator('.dsh-mk-notice button').first().click();
+await page.locator('.dsh-se-notice button').first().click();
 await page.waitForTimeout(400);
 const afterOverwrite = await page.evaluate((addr) => ({
   adds: window.__test.saved.length,
-  notice: document.querySelector('.dsh-mk-notice')?.getAttribute('data-kind') ?? null,
+  notice: document.querySelector('.dsh-se-notice')?.getAttribute('data-kind') ?? null,
   disk: window.__test.files.get(addr)?.text ?? '',
 }), raceAddress);
 check('「覆盖磁盘」writes the buffer over the other version', afterOverwrite.disk.includes('正文AB'), JSON.stringify(afterOverwrite.disk));
@@ -644,7 +644,7 @@ const savesBeforeNote = await page.evaluate(() => window.__test.saved.length);
 await page.locator('.ProseMirror > p').first().click();
 await page.keyboard.press('End');
 await page.keyboard.type('（已编辑）');
-await page.locator('.dsh-mk-foot-path').click();
+await page.locator('.dsh-se-foot-path').click();
 await page.waitForTimeout(300);
 const savedNote = await page.evaluate(() => window.__test.saved.at(-1) ?? null);
 check('frontmatter kept verbatim on save', savedNote?.content?.startsWith('---\ntitle: 带 frontmatter 的笔记\n'), (savedNote?.content ?? '').slice(0, 40));
@@ -710,7 +710,7 @@ check(
   JSON.stringify(afterShift.paragraphs),
 );
 
-await page.locator('.dsh-mk-foot-path').click();
+await page.locator('.dsh-se-foot-path').click();
 await page.waitForTimeout(300);
 const savedEnter = await page.evaluate(() => window.__test.saved.at(-1) ?? null);
 const enterText = savedEnter?.content ?? '';
@@ -724,15 +724,15 @@ check('heading paragraph is a separate block', enterText.includes('标题后新�
 console.log('tables');
 await openDoc('dsh-resource://file/session/test/table.md', '# 表格\n\n| 列 A | 列 B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n', { name: 'table.md' }, '列 A');
 await placeCaretAfter('列 A');
-await page.waitForFunction(() => document.querySelector('.dsh-mk-table-tools') !== null, undefined, { timeout: 5000 }).catch(() => {});
+await page.waitForFunction(() => document.querySelector('.dsh-se-table-tools') !== null, undefined, { timeout: 5000 }).catch(() => {});
 const toolsShown = await page.evaluate(() => {
-  const tools = document.querySelector('.dsh-mk-table-tools');
+  const tools = document.querySelector('.dsh-se-table-tools');
   return { shown: tools !== null, labels: [...(tools?.querySelectorAll('button') ?? [])].map((node) => node.textContent) };
 });
 check('a table shows its add-row/add-column buttons', toolsShown.shown === true, JSON.stringify(toolsShown));
 check('the buttons are labelled in the UI language', JSON.stringify(toolsShown.labels) === JSON.stringify(['＋ 行', '＋ 列']), JSON.stringify(toolsShown.labels));
 const rowsBefore = await page.evaluate(() => document.querySelectorAll('.ProseMirror table tr').length);
-await page.locator('.dsh-mk-table-tools button').first().click();
+await page.locator('.dsh-se-table-tools button').first().click();
 await page.waitForTimeout(200);
 const afterAddRow = await page.evaluate(() => ({
   rows: document.querySelectorAll('.ProseMirror table tr').length,
@@ -741,7 +741,7 @@ const afterAddRow = await page.evaluate(() => ({
 check('＋ 行 adds a row', afterAddRow.rows === rowsBefore + 1, `${rowsBefore} → ${afterAddRow.rows}`);
 check('the add-row button keeps the caret in the editor', afterAddRow.focused === true);
 const cellsBefore = await page.evaluate(() => document.querySelectorAll('.ProseMirror table tr:first-child th, .ProseMirror table tr:first-child td').length);
-await page.locator('.dsh-mk-table-tools button').nth(1).click();
+await page.locator('.dsh-se-table-tools button').nth(1).click();
 await page.waitForTimeout(200);
 const afterAddColumn = await page.evaluate(() => ({
   cells: document.querySelectorAll('.ProseMirror table tr:first-child th, .ProseMirror table tr:first-child td').length,
@@ -749,7 +749,7 @@ const afterAddColumn = await page.evaluate(() => ({
 }));
 check('＋ 列 adds a column to every row', afterAddColumn.cells === cellsBefore + 1, `${cellsBefore} → ${afterAddColumn.cells}`);
 check('the added column reached the new row too', afterAddColumn.rows === rowsBefore + 1, `${afterAddColumn.rows} rows`);
-await page.locator('.dsh-mk-foot-path').click();
+await page.locator('.dsh-se-foot-path').click();
 await page.waitForTimeout(300);
 const tableMarkdown = (await page.evaluate(() => window.__test.saved.at(-1)?.content ?? '')).trimEnd();
 const tableLines = tableMarkdown.split('\n').filter((line) => line.startsWith('|'));
@@ -866,7 +866,7 @@ await page.keyboard.type(' 追加文字');
 await page.mouse.click(4, 4);
 await page.waitForTimeout(600);
 const codeOfMarkdown = await page.evaluate((address) => {
-  window.__test.show(address, 'dsh-sidebar-milkdown-code');
+  window.__test.show(address, 'dsh-sidebar-editor-code');
   return true;
 }, switchAddress);
 await page.waitForFunction(() => (document.querySelector('.dsh-src-host .cm-content')?.textContent ?? '').includes('追加文字'), undefined, { timeout: 15000 }).catch(() => {});
@@ -875,7 +875,7 @@ const switched = await page.evaluate(() => ({
   text: window.__test.codeText() ?? '',
   disk: window.__test.getBodyAddress('dsh-resource://file/session/test/switch.md') ?? '',
 }));
-check('the code view can be mounted for a markdown file', codeOfMarkdown === true && switched.impl === 'dsh-sidebar-milkdown-code', switched.impl);
+check('the code view can be mounted for a markdown file', codeOfMarkdown === true && switched.impl === 'dsh-sidebar-editor-code', switched.impl);
 check('it shows raw markdown source', switched.text.includes('#') && switched.text.includes('正文 A'), switched.text.slice(0, 60));
 check('the save from the rich text view is what it reads', switched.text.includes('追加文字'), switched.text.slice(-40));
 
@@ -890,7 +890,7 @@ await placeCaretAfter('正文 B');
 await page.keyboard.type(' 未保存尾字');
 const beforeTeardown = await page.evaluate((address) => window.__test.getBodyAddress(address) ?? '', teardownAddress);
 check('the edit is not on disk before the switch', beforeTeardown.includes('未保存尾字') === false, beforeTeardown.slice(-40));
-await page.evaluate((address) => window.__test.show(address, 'dsh-sidebar-milkdown-code'), teardownAddress);
+await page.evaluate((address) => window.__test.show(address, 'dsh-sidebar-editor-code'), teardownAddress);
 await page
   .waitForFunction(
     () => (document.querySelector('.dsh-src-host .cm-content')?.textContent ?? '').includes('未保存尾字'),

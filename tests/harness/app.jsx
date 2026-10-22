@@ -39,7 +39,7 @@ let mounted;
 /** The address currently rendered, so a revision bump can re-render it. */
 let currentAddress;
 /** Which renderer is currently mounted: the rich text view or the code surface. */
-let currentImpl = 'dsh-sidebar-milkdown';
+let currentImpl = 'dsh-sidebar-editor';
 /**
  * Simulate an owner that reloads the tab when the file changes on disk.
  *
@@ -150,7 +150,7 @@ let localeBinder = (key) => key;
 const realFetch = globalThis.fetch.bind(globalThis);
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : String(input?.url ?? input);
-  const match = /\/api\/dsh-sidebar-milkdown\/([a-z]+)$/.exec(url);
+  const match = /\/api\/dsh-sidebar-editor\/([a-z]+)$/.exec(url);
   if (match === null) return realFetch(input, init);
   let payload;
   try {
@@ -168,7 +168,7 @@ globalThis.fetch = async (input, init) => {
  * @param address - the address to open.
  * @param implId - which renderer: its `documentPreviews` id, also the slot key.
  */
-function renderBody(address, implId = 'dsh-sidebar-milkdown') {
+function renderBody(address, implId = 'dsh-sidebar-editor') {
   const component = components.get(implId);
   if (component === undefined) throw new Error(`the plugin registered no body for ${implId}`);
   currentAddress = address;

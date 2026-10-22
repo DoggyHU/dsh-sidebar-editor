@@ -1,5 +1,5 @@
 /**
- * Browser half of dsh-sidebar-milkdown.
+ * Browser half of dsh-sidebar-editor.
  *
  * It contributes **two views** through **three renderer entries** to the shipped
  * document preview: an editable Markdown document (Milkdown) and an editable code
@@ -46,10 +46,10 @@ import { ROUTE_PREFIX, endpointUrl } from './channel.js';
 import { ensureStyles } from './theme.js';
 
 /** Implementation identity: the registry id and the keyed slot key. */
-export const IMPL_ID = 'dsh-sidebar-milkdown';
+export const IMPL_ID = 'dsh-sidebar-editor';
 
 /** The code surface's implementation id, a second entry with its own body. */
-export const CODE_IMPL_ID = 'dsh-sidebar-milkdown-code';
+export const CODE_IMPL_ID = 'dsh-sidebar-editor-code';
 
 /**
  * The code surface's second entry, for the few suffixes the product renders itself
@@ -57,13 +57,13 @@ export const CODE_IMPL_ID = 'dsh-sidebar-milkdown-code';
  * the default and the editor is one dropdown entry away. One definition has one
  * band, which is why this cannot be a suffix inside `CODE_IMPL_ID`.
  */
-export const CODE_SHIPPED_IMPL_ID = 'dsh-sidebar-milkdown-code-shipped';
+export const CODE_SHIPPED_IMPL_ID = 'dsh-sidebar-editor-code-shipped';
 
 /** Suffixes the rich text view claims. HTML is left to the shipped renderer. */
 export const EXTENSIONS = ['md', 'markdown'];
 
 /** Locale namespace this plugin owns. */
-export const NS = 'dshSidebarMilkdown';
+export const NS = 'dshSidebarEditor';
 
 export { ROUTE_PREFIX };
 
@@ -195,14 +195,14 @@ function fontDiagnostics() {
   try {
     const doc = globalThis.document;
     if (doc === undefined || doc.body === null) return undefined;
-    const live = doc.querySelector('.dsh-mk-surface');
+    const live = doc.querySelector('.dsh-se-surface');
     let host = live;
     let probe;
     if (host === null) {
       const root = doc.createElement('div');
-      root.className = 'dsh-mk-root';
+      root.className = 'dsh-se-root';
       probe = doc.createElement('div');
-      probe.className = 'dsh-mk-surface';
+      probe.className = 'dsh-se-surface';
       probe.textContent = '字体 Test 123';
       root.style.position = 'absolute';
       root.style.visibility = 'hidden';
@@ -275,7 +275,7 @@ export function apply(ctx) {
     /* a page without a document cannot show an editor anyway */
   }
 
-  ctx.effect(() => ctx.locale.register(NS, DICTIONARIES), 'dsh-sidebar-milkdown: dictionaries');
+  ctx.effect(() => ctx.locale.register(NS, DICTIONARIES), 'dsh-sidebar-editor: dictionaries');
   const t = ctx.locale.bind(NS);
 
   // Both registrations live in ONE effect, and the rich text one is registered
@@ -323,7 +323,7 @@ export function apply(ctx) {
         disposeRich?.();
       };
     },
-    'dsh-sidebar-milkdown: renderer metadata',
+    'dsh-sidebar-editor: renderer metadata',
   );
 
   ctx.effect(
@@ -336,7 +336,7 @@ export function apply(ctx) {
           (props) => createElement(BodyBoundary, { t: props.t }, createElement(MilkdownBody, { ...props, call: callHost })),
         ),
       ),
-    'dsh-sidebar-milkdown: renderer body',
+    'dsh-sidebar-editor: renderer body',
   );
 
   ctx.effect(
@@ -347,7 +347,7 @@ export function apply(ctx) {
           (props) => createElement(BodyBoundary, { t: props.t }, createElement(SourceBody, { ...props, call: callHost })),
         ),
       ),
-    'dsh-sidebar-milkdown: code renderer body',
+    'dsh-sidebar-editor: code renderer body',
   );
 
   // The same body again, under the shipped-band entry's key: the slot is keyed by
@@ -360,7 +360,7 @@ export function apply(ctx) {
           (props) => createElement(BodyBoundary, { t: props.t }, createElement(SourceBody, { ...props, call: callHost })),
         ),
       ),
-    'dsh-sidebar-milkdown: code renderer body (shipped band)',
+    'dsh-sidebar-editor: code renderer body (shipped band)',
   );
 
   void Promise.resolve().then(() => reportToHost(ctx));

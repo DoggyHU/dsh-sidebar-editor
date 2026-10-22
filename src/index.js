@@ -1,5 +1,5 @@
 /**
- * Host half of dsh-sidebar-milkdown.
+ * Host half of dsh-sidebar-editor.
  *
  * The visible feature (a ProseMirror/Milkdown Markdown editor registered as a
  * document-preview renderer) lives in the browser half. This half exists for two
@@ -36,14 +36,14 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
-const ROUTE_PREFIX = '/api/dsh-sidebar-milkdown';
+const ROUTE_PREFIX = '/api/dsh-sidebar-editor';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '0.3.0';
+const VERSION = '1.0.0';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
-  process.env.DSH_SIDEBAR_MILKDOWN_REPORT ?? join(tmpdir(), 'dsh-sidebar-milkdown-report.json');
+  process.env.DSH_SIDEBAR_EDITOR_REPORT ?? join(tmpdir(), 'dsh-sidebar-editor-report.json');
 /** Load-time breadcrumb trail; the file that made this plugin's one hard bug visible. */
-const DIAG_PATH = process.env.DSH_SIDEBAR_MILKDOWN_DIAG ?? join(tmpdir(), 'dsh-sidebar-milkdown-host.log');
+const DIAG_PATH = process.env.DSH_SIDEBAR_EDITOR_DIAG ?? join(tmpdir(), 'dsh-sidebar-editor-host.log');
 /** Largest file this editor will open or save, in UTF-8 bytes. */
 const MAX_BYTES = 2 * 1024 * 1024;
 /** Byte-order mark the editor keeps out of its buffer but restores on save. */
@@ -71,7 +71,7 @@ function diagnose(line) {
 
 diagnose(`module loaded (v${VERSION}, pid ${process.pid}, exec ${basename(process.execPath)})`);
 
-export const name = 'dsh-sidebar-milkdown';
+export const name = 'dsh-sidebar-editor';
 /** The authenticated RPC carrier this plugin's channel is served over. */
 export const inject = ['connection'];
 
@@ -646,7 +646,7 @@ export function apply(ctx) {
                 }
               },
             }),
-          `dsh-sidebar-milkdown: ${path}`,
+          `dsh-sidebar-editor: ${path}`,
         );
         diagnose(`route ${path} registered`);
       } catch (error) {

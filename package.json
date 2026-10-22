@@ -1,9 +1,9 @@
 {
-  "name": "dsh-sidebar-milkdown",
-  "version": "0.3.0",
+  "name": "dsh-sidebar-editor",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "给 DSH 官方右侧栏文档预览增加两个可编辑视图：Markdown 走 ProseMirror（Milkdown）渲染式编辑，代码与纯文本走 CodeMirror 6，两个视图共用一套读写通道与保存语义。",
+  "description": "给 DSH 官方右侧栏文档预览增加两个可编辑视图：Markdown 走 ProseMirror（Milkdown）渲染式编辑，代码与纯文本走 CodeMirror 6；两个视图共用一套读写通道与保存语义。",
   "exports": {
     ".": "./src/index.js",
     "./client": "./lib/client.js",

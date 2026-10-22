@@ -117,11 +117,11 @@ const state = await page.evaluate(() => ({
 }));
 
 check('the bundle called the module loader', state.loaded.length === 1, JSON.stringify(state.loaded));
-check('the module id is the package name', state.loaded[0]?.id === 'dsh-sidebar-milkdown', state.loaded[0]?.id);
+check('the module id is the package name', state.loaded[0]?.id === 'dsh-sidebar-editor', state.loaded[0]?.id);
 check('the entry carries a factory', state.loaded[0]?.hasFactory === 'function');
 check('the factory returned exports', state.exports !== null && state.exports.error === undefined, state.exports?.error);
 check('exports apply', state.exports?.applyType === 'function', JSON.stringify(state.exports?.keys));
-check('exports the implementation id', state.exports?.implId === 'dsh-sidebar-milkdown', state.exports?.implId);
+check('exports the implementation id', state.exports?.implId === 'dsh-sidebar-editor', state.exports?.implId);
 check(
   'exports the claimed suffixes',
   JSON.stringify(state.exports?.extensions) === JSON.stringify(['md', 'markdown']),
@@ -139,7 +139,7 @@ check(
   JSON.stringify(hostPrefixes) === JSON.stringify(clientPrefixes) && hostPrefixes.length === 1,
   `host ${JSON.stringify(hostPrefixes)} vs client ${JSON.stringify(clientPrefixes)}`,
 );
-check('the prefix is the plugin name', hostPrefixes[0] === '/api/dsh-sidebar-milkdown', hostPrefixes[0]);
+check('the prefix is the plugin name', hostPrefixes[0] === '/api/dsh-sidebar-editor', hostPrefixes[0]);
 
 await browser.close();
 rmSync(artifacts, { recursive: true, force: true });

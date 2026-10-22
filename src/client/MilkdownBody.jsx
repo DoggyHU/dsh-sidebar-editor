@@ -594,10 +594,10 @@ export function MilkdownBody(props) {
   };
 
   return (
-    <div ref={hostRef} className={`dsh-mk-root${wrapOn ? '' : ' dsh-mk-nowrap'}`}>
+    <div ref={hostRef} className={`dsh-se-root${wrapOn ? '' : ' dsh-se-nowrap'}`}>
       {notice === undefined ? null : (
-        <div className="dsh-mk-notice" data-kind={notice.kind}>
-          <span className="dsh-mk-notice-text">
+        <div className="dsh-se-notice" data-kind={notice.kind}>
+          <span className="dsh-se-notice-text">
             {notice.kind === 'conflict'
               ? label('conflict', '磁盘上的文件已变更，保存被拒。')
               : notice.kind === 'external'
@@ -606,37 +606,37 @@ export function MilkdownBody(props) {
           </span>
           {notice.kind === 'conflict' ? (
             <>
-              <button className="dsh-mk-button" type="button" onClick={() => void saveRef.current?.(true)}>
+              <button className="dsh-se-button" type="button" onClick={() => void saveRef.current?.(true)}>
                 {label('overwrite', '覆盖磁盘')}
               </button>
-              <button className="dsh-mk-button" type="button" onClick={retry}>
+              <button className="dsh-se-button" type="button" onClick={retry}>
                 {label('reload', '重新加载')}
               </button>
             </>
           ) : notice.kind === 'external' ? (
             <>
-              <button className="dsh-mk-button" type="button" onClick={() => void loadDiskVersion()}>
+              <button className="dsh-se-button" type="button" onClick={() => void loadDiskVersion()}>
                 {label('loadDisk', '载入磁盘版本')}
               </button>
-              <button className="dsh-mk-button" type="button" onClick={() => setNotice(undefined)}>
+              <button className="dsh-se-button" type="button" onClick={() => setNotice(undefined)}>
                 {label('keepMine', '保留我的修改')}
               </button>
             </>
           ) : (
-            <button className="dsh-mk-button" type="button" onClick={() => void saveRef.current?.(false)}>
+            <button className="dsh-se-button" type="button" onClick={() => void saveRef.current?.(false)}>
               {label('retry', '重试')}
             </button>
           )}
         </div>
       )}
 
-      <div ref={scrollRef} className="dsh-mk-scroll">
+      <div ref={scrollRef} className="dsh-se-scroll">
         {doc.phase === 'error' ? (
-          <div className="dsh-mk-center" data-kind="error">
+          <div className="dsh-se-center" data-kind="error">
             {`${label('error', '打开失败')}：${describeFailure(doc, label)}\n\n${label('switchBack', '可在工具栏下拉里切回官方预览。')}`}
             {typeof content?.reload === 'function' ? (
               <div style={{ marginTop: '10px' }}>
-                <button className="dsh-mk-button" type="button" onClick={retry}>
+                <button className="dsh-se-button" type="button" onClick={retry}>
                   {label('retry', '重试')}
                 </button>
               </div>
@@ -644,8 +644,8 @@ export function MilkdownBody(props) {
           </div>
         ) : (
           <>
-            {doc.phase === 'loading' ? <div className="dsh-mk-center">{label('loading', '读取中…')}</div> : null}
-            <div className="dsh-mk-pad">
+            {doc.phase === 'loading' ? <div className="dsh-se-center">{label('loading', '读取中…')}</div> : null}
+            <div className="dsh-se-pad">
               {/* React owns this element and nothing inside it: the editor replaces
                   its children itself, and a React-rendered child here would be
                   removed from under the contenteditable on the next render. */}
@@ -655,13 +655,13 @@ export function MilkdownBody(props) {
         )}
         {tableTools === undefined ? null : (
           <div
-            className="dsh-mk-table-tools"
+            className="dsh-se-table-tools"
             style={{ top: `${tableTools.top}px`, left: `${tableTools.left}px`, transform: 'translate(-100%, -100%)' }}
             // The buttons must not take the caret out of the table they act on.
             onMouseDown={(event) => event.preventDefault()}
           >
             <button
-              className="dsh-mk-button"
+              className="dsh-se-button"
               type="button"
               title={label('addRowHint', '在表格末尾加一行；Tab 也可以')}
               onClick={() => {
@@ -671,7 +671,7 @@ export function MilkdownBody(props) {
               {label('addRow', '＋ 行')}
             </button>
             <button
-              className="dsh-mk-button"
+              className="dsh-se-button"
               type="button"
               title={label('addColumnHint', '在表格右侧加一列')}
               onClick={() => {
@@ -684,20 +684,20 @@ export function MilkdownBody(props) {
         )}
       </div>
 
-      <div className="dsh-mk-foot">
-        <span className="dsh-mk-foot-path" title={doc.absolutePath ?? address}>
+      <div className="dsh-se-foot">
+        <span className="dsh-se-foot-path" title={doc.absolutePath ?? address}>
           {doc.absolutePath ?? doc.path ?? address}
         </span>
-        <span className="dsh-mk-foot-state" data-state={state}>
+        <span className="dsh-se-foot-state" data-state={state}>
           {stateText}
         </span>
         {doc.writable === false ? (
-          <span className="dsh-mk-foot-state" data-state="readonly">
+          <span className="dsh-se-foot-state" data-state="readonly">
             {label('readonlyOutside', '只读（工作区外）')}
           </span>
         ) : null}
         <button
-          className="dsh-mk-button"
+          className="dsh-se-button"
           type="button"
           title={label('saveHint', 'Ctrl/Cmd+S')}
           disabled={state !== 'dirty' || doc.writable === false}

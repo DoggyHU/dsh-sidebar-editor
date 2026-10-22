@@ -11,8 +11,8 @@ import { Component, createElement } from 'react';
 /** Report one failure to the host log; never throws. */
 function report(error) {
   try {
-    console.error('[dsh-sidebar-milkdown] body', error);
-    const pending = fetch('/api/dsh-sidebar-milkdown/diag', {
+    console.error('[dsh-sidebar-editor] body', error);
+    const pending = fetch('/api/dsh-sidebar-editor/diag', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ kind: 'body', message: String(error?.stack ?? error).slice(0, 4000) }),
