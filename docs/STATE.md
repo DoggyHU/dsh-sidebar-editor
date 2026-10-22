@@ -9,7 +9,7 @@
 | 项 | 值 |
 |---|---|
 | 版本 | 1.0.0（**两个视图**：富文本 + 源码；名字从 `dsh-sidebar-milkdown` 改成 `dsh-sidebar-editor`） |
-| 产物 | `lib/client.js` 重建后见构建输出（改名前一版 2756.1 KB，171 个打包包） |
+| 产物 | `lib/client.js` 2756.3 KB（171 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
 | 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 150 项，全绿 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`（`link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor`），`bundles` 里只有本插件 |
