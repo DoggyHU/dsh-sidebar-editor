@@ -115,6 +115,44 @@ async function openDoc(address, text, options, expect) {
 }
 
 /**
+ * Open a fake file in the code surface and wait until CodeMirror shows it.
+ * @param address - the file address.
+ * @param text - the file's text.
+ * @param options - `{ name, writable }`.
+ * @param expect - a string the buffer must contain.
+ */
+async function openCode(address, text, options, expect) {
+  await page.evaluate(
+    ([a, t, o]) => window.__test.open(a, t, { ...o, impl: 'dsh-sidebar-milkdown-code' }),
+    [address, text, options ?? {}],
+  );
+  try {
+    await page.waitForFunction(
+      (needle) => (document.querySelector('.dsh-src-host .cm-content')?.textContent ?? '').includes(needle),
+      expect,
+      { timeout: 15000 },
+    );
+  } catch (error) {
+    console.error(`the code view never showed "${expect}"`);
+    console.error('host html:\n' + (await page.evaluate(() => document.body.innerHTML.slice(0, 3000))));
+    console.error('page log:\n' + consoleLines.join('\n'));
+    throw error;
+  }
+  await page.waitForTimeout(200);
+}
+
+/**
+ * Put the caret at the end of the code buffer and type into it for real.
+ * @param text - what to type.
+ */
+async function typeIntoCode(text) {
+  await page.locator('.dsh-src-host .cm-content').click();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.type(text);
+  await page.waitForTimeout(120);
+}
+
+/**
  * Put the caret right after a text fragment through the document selection.
  *
  * A synthetic `mouse.down`/`mouse.up` pair at a computed caret point does not
@@ -162,25 +200,36 @@ if ((await page.locator('.ProseMirror').count()) === 0) {
 
 // ── 1. registration ──────────────────────────────────────────────────────────
 console.log('registration');
-const registration = await page.evaluate(() => {
-  const [definition] = window.__test.definitions;
-  return definition === undefined
-    ? undefined
-    : {
-        id: definition.id,
-        extensions: definition.extensions,
-        priority: definition.priority,
-        loading: definition.loading,
-        wrap: definition.wrap,
-        title: typeof definition.title === 'function' ? definition.title() : undefined,
-      };
-});
-check('registers exactly one renderer', (await page.evaluate(() => window.__test.definitions.length)) === 1);
-check('id is dsh-sidebar-milkdown', registration?.id === 'dsh-sidebar-milkdown', JSON.stringify(registration));
+const definitions = await page.evaluate(() =>
+  window.__test.definitions.map((definition) => ({
+    id: definition.id,
+    extensions: definition.extensions,
+    priority: definition.priority,
+    loading: definition.loading,
+    wrap: definition.wrap,
+    title: typeof definition.title === 'function' ? definition.title() : undefined,
+  })),
+);
+const registration = definitions[0];
+check('registers three entries', definitions.length === 3, JSON.stringify(definitions.map((one) => one.id)));
+check('the rich text view is registered first', registration?.id === 'dsh-sidebar-milkdown', registration?.id);
+check('the code surface is registered second', definitions[1]?.id === 'dsh-sidebar-milkdown-code', definitions[1]?.id);
+check('the shipped-band code entry is third', definitions[2]?.id === 'dsh-sidebar-milkdown-code-shipped', definitions[2]?.id);
 check('claims md and markdown', JSON.stringify(registration?.extensions) === JSON.stringify(['md', 'markdown']));
-check("priority is 'preferred' (beats builtin)", registration?.priority === 'preferred');
-check("loading mode is 'renderer'", registration?.loading === 'renderer');
-check('title bound from the locale', registration?.title === '富文本编辑器', registration?.title);
+check('the two editable entries sit above builtin', registration?.priority === 'preferred' && definitions[1]?.priority === 'preferred', JSON.stringify(definitions.map((one) => one.priority)));
+check('the shipped-band entry does not', definitions[2]?.priority === 'builtin', definitions[2]?.priority);
+check("each uses loading mode 'renderer'", definitions.every((one) => one.loading === 'renderer'));
+check('the code surface claims the shipped code table', (definitions[1]?.extensions.length ?? 0) > 100, `${definitions[1]?.extensions.length} suffixes`);
+check('the code surface also claims markdown', ['md', 'markdown'].every((suffix) => definitions[1]?.extensions.includes(suffix) === true));
+check('the product-rendered suffixes kept their rendered default', JSON.stringify(definitions[2]?.extensions) === JSON.stringify(['html', 'htm', 'svg', 'csv']), JSON.stringify(definitions[2]?.extensions));
+check('no suffix is claimed by both code entries', definitions[2].extensions.every((suffix) => definitions[1].extensions.includes(suffix) === false));
+check('the rich text title is bound from the locale', registration?.title === '富文本编辑器', registration?.title);
+check('the code title is bound from the locale', definitions[1]?.title === '源代码', definitions[1]?.title);
+const probeRankings = await page.evaluate(() => window.__test.reports.at(-1)?.ranking ?? null);
+check('the client reported the ranking it resolved', probeRankings !== null, JSON.stringify(probeRankings));
+check('markdown ranks rich text, then source', JSON.stringify(probeRankings?.['probe.md']) === JSON.stringify(['dsh-sidebar-milkdown', 'dsh-sidebar-milkdown-code']), JSON.stringify(probeRankings?.['probe.md']));
+check('a source file ranks the editable surface first', JSON.stringify(probeRankings?.['probe.py']) === JSON.stringify(['dsh-sidebar-milkdown-code']), JSON.stringify(probeRankings?.['probe.py']));
+check('an html file ranks only the shipped-band entry', JSON.stringify(probeRankings?.['probe.html']) === JSON.stringify(['dsh-sidebar-milkdown-code-shipped']), JSON.stringify(probeRankings?.['probe.html']));
 
 // ── 2. it rendered the document ──────────────────────────────────────────────
 console.log('rendering');
@@ -708,12 +757,161 @@ const tableLines = tableMarkdown.split('\n').filter((line) => line.startsWith('|
 check('the grown table serialized', tableLines.length === rowsBefore + 2, tableLines.join(' / '));
 check('every serialized row has three columns', tableLines.every((line) => (line.match(/\|/g) ?? []).length === 4), tableLines.join(' / '));
 
+// ── 10. the code surface ────────────────────────────────────────────────────
+console.log('code view');
+const pyAddress = 'dsh-resource://file/session/test/tool.py';
+const pyText = 'import os\n\ndef main():\n    print("hello")\n\nmain()\n';
+await openCode(pyAddress, pyText, { name: 'tool.py' }, 'import os');
+const codeState = await page.evaluate(() => ({
+  lines: window.__test.codeLines(),
+  editable: window.__test.codeEditable(),
+  text: window.__test.codeText() ?? '',
+  highlighted: document.querySelectorAll('.dsh-src-host .cm-line span').length,
+  gutters: document.querySelectorAll('.dsh-src-host .cm-lineNumbers .cm-gutterElement').length,
+  foot: document.querySelector('.dsh-src-foot')?.textContent ?? '',
+  hostHasProseMirror: document.querySelector('.dsh-src-host .ProseMirror') !== null,
+}));
+check('the code surface mounted', codeState.text.includes('def main():'), codeState.text.slice(0, 80));
+check('it stayed out of the rich text editor', codeState.hostHasProseMirror === false);
+check('every line is rendered', codeState.lines >= 6 && codeState.lines <= 7, `${codeState.lines} lines`);
+check('line numbers are shown', codeState.gutters >= 6, `${codeState.gutters} gutters`);
+check('python is syntax highlighted', codeState.highlighted > 0, `${codeState.highlighted} spans`);
+check('the code surface is editable', codeState.editable === 'true', String(codeState.editable));
+check('the status bar names the file and the suffix', codeState.foot.includes('tool.py') && codeState.foot.includes('py'), codeState.foot);
+
+const savedBeforeTyping = await page.evaluate(() => window.__test.saved.length);
+await typeIntoCode('# touched by the test');
+const dirtyState = await page.evaluate(() => ({
+  foot: document.querySelector('.dsh-src-foot')?.textContent ?? '',
+  saved: window.__test.saved.length,
+}));
+check('typing marks the code view unsaved', dirtyState.foot.includes('未保存'), dirtyState.foot);
+check('typing alone writes nothing', dirtyState.saved === savedBeforeTyping, `${savedBeforeTyping} → ${dirtyState.saved}`);
+await page.keyboard.press('Control+s');
+await page.waitForTimeout(400);
+const afterCodeSave = await page.evaluate((address) => ({
+  sent: window.__test.saved.at(-1)?.content ?? '',
+  disk: window.__test.getBodyAddress(address) ?? '',
+  foot: document.querySelector('.dsh-src-foot')?.textContent ?? '',
+}), pyAddress);
+check('Ctrl+S writes the code buffer', afterCodeSave.sent.includes('# touched by the test'), afterCodeSave.sent.slice(-40));
+check('the fake disk holds it', afterCodeSave.disk.includes('# touched by the test'));
+check('the status bar says saved', afterCodeSave.foot.includes('已保存'), afterCodeSave.foot);
+
+await typeIntoCode('\n# clicked away');
+// The CodeMirror scroller fills the pane, so a corner click can land *inside* the
+// editor. The status bar is the honest "outside" target here.
+await page.locator('.dsh-src-foot span').first().click();
+await page.waitForTimeout(500);
+const afterClickAway = await page.evaluate((address) => window.__test.getBodyAddress(address) ?? '', pyAddress);
+check('a click outside the code surface saves it', afterClickAway.includes('# clicked away'), afterClickAway.slice(-40));
+
+await openCode('dsh-resource://file/session/test/locked.py', 'x = 1\n', { name: 'locked.py', writable: false }, 'x = 1');
+const readonlyState = await page.evaluate(() => ({
+  editable: window.__test.codeEditable(),
+  buttons: [...document.querySelectorAll('.dsh-src-foot button')].map((node) => node.textContent),
+  foot: document.querySelector('.dsh-src-foot')?.textContent ?? '',
+}));
+check('a file outside the workspace opens read-only', readonlyState.editable === 'false', String(readonlyState.editable));
+check('the read-only code view offers no save button', readonlyState.buttons.length === 0, JSON.stringify(readonlyState.buttons));
+check('the status bar says why', readonlyState.foot.includes('只读'), readonlyState.foot);
+
+const conflictAddress = 'dsh-resource://file/session/test/conflict.py';
+await openCode(conflictAddress, 'a = 1\n', { name: 'conflict.py' }, 'a = 1');
+await page.evaluate(() => window.__test.armConflict('a = 999\n# someone else\n'));
+await typeIntoCode('# mine');
+await page.keyboard.press('Control+s');
+await page.waitForTimeout(500);
+const conflictState = await page.evaluate(() => ({
+  banner: document.querySelector('.dsh-src-root')?.textContent ?? '',
+  buttons: [...document.querySelectorAll('.dsh-src-root button')].map((node) => node.textContent),
+  text: window.__test.codeText() ?? '',
+}));
+check('a stale token raises the conflict strip', conflictState.banner.includes('磁盘上的文件已变更'), conflictState.banner.slice(0, 80));
+check('the conflict strip offers overwrite and reload', conflictState.buttons.includes('覆盖磁盘') && conflictState.buttons.includes('重新加载'), JSON.stringify(conflictState.buttons));
+check('the conflict left the buffer alone', conflictState.text.includes('# mine'));
+await page.getByRole('button', { name: '覆盖磁盘' }).click();
+await page.waitForTimeout(500);
+const afterForcedOverwrite = await page.evaluate((address) => window.__test.getBodyAddress(address) ?? '', conflictAddress);
+check('overwrite writes the buffer over the disk version', afterForcedOverwrite.includes('# mine'), afterForcedOverwrite.slice(-40));
+
+const externalAddress = 'dsh-resource://file/session/test/external.py';
+await openCode(externalAddress, 'v = 1\n', { name: 'external.py' }, 'v = 1');
+await typeIntoCode('# unsaved');
+await page.evaluate((address) => {
+  window.__test.writeSilently(address, 'v = 2\n');
+  window.__test.bumpRevision();
+}, externalAddress);
+await page.waitForTimeout(600);
+const externalState = await page.evaluate(() => ({
+  banner: document.querySelector('.dsh-src-root')?.textContent ?? '',
+  buttons: [...document.querySelectorAll('.dsh-src-root button')].map((node) => node.textContent),
+  text: window.__test.codeText() ?? '',
+}));
+check('an external change never overwrites unsaved code', externalState.text.includes('# unsaved'), externalState.text.slice(-40));
+check('the strip says the file changed outside', externalState.banner.includes('外部修改'), externalState.banner.slice(0, 80));
+check('the external strip offers the disk version', externalState.buttons.includes('重新加载'), JSON.stringify(externalState.buttons));
+check('the external strip can be dismissed', externalState.buttons.includes('保留我的修改'), JSON.stringify(externalState.buttons));
+
+await openCode('dsh-resource://file/session/test/fence.md', '# 标题\n\n```js\nconst answer = 42;\n```\n', { name: 'fence.md' }, 'const answer');
+const fenceSpans = await page.evaluate(() => document.querySelectorAll('.dsh-src-host .cm-line span').length);
+check('a markdown fence is highlighted through the code view too', fenceSpans > 0, `${fenceSpans} spans`);
+
+// Switching views on one file: whatever the rich text view saved has to be what
+// the code view reads, which is what the host's per-address queue guarantees.
+const switchAddress = 'dsh-resource://file/session/test/switch.md';
+await openDoc(switchAddress, '# 切换\n\n正文 A\n', { name: 'switch.md' }, '正文 A');
+await placeCaretAfter('正文 A');
+await page.keyboard.type(' 追加文字');
+await page.mouse.click(4, 4);
+await page.waitForTimeout(600);
+const codeOfMarkdown = await page.evaluate((address) => {
+  window.__test.show(address, 'dsh-sidebar-milkdown-code');
+  return true;
+}, switchAddress);
+await page.waitForFunction(() => (document.querySelector('.dsh-src-host .cm-content')?.textContent ?? '').includes('追加文字'), undefined, { timeout: 15000 }).catch(() => {});
+const switched = await page.evaluate(() => ({
+  impl: window.__test.currentImpl(),
+  text: window.__test.codeText() ?? '',
+  disk: window.__test.getBodyAddress('dsh-resource://file/session/test/switch.md') ?? '',
+}));
+check('the code view can be mounted for a markdown file', codeOfMarkdown === true && switched.impl === 'dsh-sidebar-milkdown-code', switched.impl);
+check('it shows raw markdown source', switched.text.includes('#') && switched.text.includes('正文 A'), switched.text.slice(0, 60));
+check('the save from the rich text view is what it reads', switched.text.includes('追加文字'), switched.text.slice(-40));
+
+// ── 11. teardown is a save point ─────────────────────────────────────────────
+// Edit, then let the *owner* swap the view without any user gesture: no blur, no
+// click outside. Only the unmount path can persist this, and only if it captures the
+// buffer before the editor is destroyed and orders the write ahead of the new read.
+console.log('teardown');
+const teardownAddress = 'dsh-resource://file/session/test/teardown.md';
+await openDoc(teardownAddress, '# 卸载\n\n正文 B\n', { name: 'teardown.md' }, '正文 B');
+await placeCaretAfter('正文 B');
+await page.keyboard.type(' 未保存尾字');
+const beforeTeardown = await page.evaluate((address) => window.__test.getBodyAddress(address) ?? '', teardownAddress);
+check('the edit is not on disk before the switch', beforeTeardown.includes('未保存尾字') === false, beforeTeardown.slice(-40));
+await page.evaluate((address) => window.__test.show(address, 'dsh-sidebar-milkdown-code'), teardownAddress);
+await page
+  .waitForFunction(
+    () => (document.querySelector('.dsh-src-host .cm-content')?.textContent ?? '').includes('未保存尾字'),
+    undefined,
+    { timeout: 10000 },
+  )
+  .catch(() => {});
+const afterTeardown = await page.evaluate((address) => window.__test.getBodyAddress(address) ?? '', teardownAddress);
+const teardownCode = await page.evaluate(() => window.__test.codeText() ?? '');
+check('switching views flushes the unsaved rich text buffer', afterTeardown.includes('未保存尾字'), afterTeardown.slice(-40));
+check('the code view read the flushed bytes', teardownCode.includes('未保存尾字'), teardownCode.slice(-40));
+
 // ── screenshots for the visual check ────────────────────────────────────────
 const shots = join(root, 'tests', 'shots');
 mkdirSync(shots, { recursive: true });
 await openDoc('dsh-resource://file/session/test/sample.md', sample, { name: 'sample.md' }, '渲染式编辑器自测');
 await page.waitForTimeout(500);
 await page.screenshot({ path: join(shots, 'editor-sample.png'), fullPage: false });
+await openCode(pyAddress, pyText, { name: 'tool.py' }, 'import os');
+await page.waitForTimeout(400);
+await page.screenshot({ path: join(shots, 'code-sample.png'), fullPage: false });
 
 await browser.close();
 

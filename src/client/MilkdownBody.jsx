@@ -44,6 +44,7 @@ import {
   splitFrontmatter,
   viewOf,
 } from './editor.js';
+import { enqueueWrite, whenIdle } from './write-queue.js';
 
 /**
  * The reading position of each open document, keyed by address.
@@ -80,8 +81,6 @@ export function MilkdownBody(props) {
   /** True while the disk version is unknown (after a conflict or a failed save). */
   const pausedRef = useRef(false);
   const saveRef = useRef(undefined);
-  /** Serialises writes: one gesture can arm several save points at once. */
-  const saveChainRef = useRef(Promise.resolve());
   /** The owner revision this body has already reconciled. */
   const loadedRevisionRef = useRef(undefined);
   /** True while an IME composition owns the buffer. */
@@ -102,23 +101,33 @@ export function MilkdownBody(props) {
   /**
    * Write the buffer, unless it is already what the disk holds.
    * @param force - true skips the version guard (the user chose "overwrite").
+   * @param override - `{ body }` to write a body captured before the view went away;
+   * the teardown path cannot read the editor any more and passes it in here.
    */
   const runSave = useCallback(
-    async (force) => {
-      const editor = editorRef.current;
+    async (force, override) => {
       const held = docRef.current;
-      if (editor === undefined || held.phase !== 'ready') return;
+      if (held.phase !== 'ready') return;
       if (held.writable !== true || typeof call !== 'function') return;
       // Guard against a rebinding race: the render that follows an address change
       // rebinds `saveRef` to the new document before the old effect's cleanup runs,
       // and without this check the old buffer would be written into the new file.
       if (held.address !== address) return;
-      // Apply whatever the DOM observer is still holding before reading the buffer:
-      // an IME commit or an automation `insertText` is not in the state yet.
-      flushPendingInput(editor);
-      const body = readMarkdown(editor) || markdownRef.current;
-      markdownRef.current = body;
+      let body;
+      if (override === undefined) {
+        const editor = editorRef.current;
+        if (editor === undefined) return;
+        // Apply whatever the DOM observer is still holding before reading the buffer:
+        // an IME commit or an automation `insertText` is not in the state yet.
+        flushPendingInput(editor);
+        body = readMarkdown(editor) || markdownRef.current;
+        markdownRef.current = body;
+      } else {
+        body = override.body;
+      }
+      if (body === undefined) return;
       if (force !== true && body === baselineRef.current) return;
+      setState('saving');
       setState('saving');
       try {
         const result = await call('save', {
@@ -137,7 +146,9 @@ export function MilkdownBody(props) {
           setDoc(next);
           pausedRef.current = false;
           setNotice(undefined);
-          setState('saved');
+          // Typing may have continued while the write was in flight; only call it saved
+          // when the buffer still is what was written.
+          setState(markdownRef.current === body ? 'saved' : 'dirty');
           return;
         }
         if (result?.code === 'conflict') {
@@ -177,23 +188,17 @@ export function MilkdownBody(props) {
   );
 
   /**
-   * Queue a write behind any write already in flight.
+   * Queue a write behind any write already queued for this address.
    *
-   * One gesture can trigger several save points at once — clicking into the chat box
-   * is a `pointerdown` outside the editor *and* a blur — and two writes carrying the
-   * same version token mean the second one conflicts with the first. Serialising them
-   * turns that into "the second call finds nothing left to write".
+   * The queue is module level and keyed by address, so it also orders writes across
+   * the two views: one gesture can arm several save points at once (clicking into the
+   * chat box is a `pointerdown` outside the editor *and* a blur), and two writes
+   * carrying the same version token mean the second one conflicts with the first.
+   * Serialising them turns that into "the second call finds nothing left to write".
    */
   const save = useCallback(
-    (force) => {
-      const queued = saveChainRef.current.then(
-        () => runSave(force),
-        () => runSave(force),
-      );
-      saveChainRef.current = queued.catch(() => {});
-      return queued;
-    },
-    [runSave],
+    (force, override) => enqueueWrite(address, () => runSave(force, override)),
+    [address, runSave],
   );
   saveRef.current = save;
 
@@ -291,6 +296,9 @@ export function MilkdownBody(props) {
     setDoc(docRef.current);
 
     (async () => {
+      // Nothing may be read while a write for this file is still queued — that is the
+      // other view's teardown write when the dropdown just switched it out.
+      await whenIdle(address);
       let result;
       try {
         result = await call('open', { address }, controller.signal);
@@ -367,8 +375,18 @@ export function MilkdownBody(props) {
       cancelled = true;
       controller.abort();
       const held = docRef.current;
-      const pending = markdownRef.current !== undefined && markdownRef.current !== baselineRef.current;
-      if (held.phase === 'ready' && held.writable === true && pending) void saveDocument(false);
+      const liveEditor = editorRef.current;
+      // Read the buffer **now**, and hand it to the queue as data. Queueing a save that
+      // re-reads the view (what this used to do) is a write that can never happen: the
+      // queue runs after this cleanup, by which time the editor is destroyed and the
+      // refs below are cleared.
+      let pending;
+      if (held.phase === 'ready' && held.writable === true && liveEditor !== undefined) {
+        flushPendingInput(liveEditor);
+        const body = readMarkdown(liveEditor) || markdownRef.current;
+        if (body !== undefined && body !== baselineRef.current) pending = { body };
+      }
+      if (pending !== undefined) void saveDocument(false, pending);
       const scroll = scrollRef.current;
       if (scroll !== null) scrollPositions.set(address, scroll.scrollTop);
       const editor = editorRef.current;
@@ -393,6 +411,9 @@ export function MilkdownBody(props) {
     const controller = new AbortController();
     let cancelled = false;
     (async () => {
+      // Nothing may be read while a write for this file is still queued — that is the
+      // other view's teardown write when the dropdown just switched it out.
+      await whenIdle(address);
       let result;
       try {
         result = await call('open', { address }, controller.signal);

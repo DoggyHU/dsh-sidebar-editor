@@ -1,37 +1,65 @@
 /**
  * Browser half of dsh-sidebar-milkdown.
  *
- * It contributes exactly one thing to the shipped document preview: a renderer in
- * the viewer dropdown that is an *editable* Markdown document rather than a code
- * surface or a read-only render. The tab, header, Reload control and wrap toggle
- * all stay the official ones.
+ * It contributes **two views** through **three renderer entries** to the shipped
+ * document preview: an editable Markdown document (Milkdown) and an editable code
+ * surface (CodeMirror), where the code surface needs a second entry because one
+ * definition carries one priority band. The tab, header, Reload control and wrap
+ * toggle all stay the official ones.
  *
- * Registration band is the whole trick this time. The registry ranks
+ * Registration band and order are the whole trick. The registry ranks
  *
  *   `priority === 'builtin' ? 0 : 1`, descending, then matched suffix length
  *   descending, then registration order ascending
  *
- * so a `'preferred'` registration outranks every shipped renderer and becomes the
- * default view for `.md` — which is what "make this the Markdown view" means. The
- * shipped renderers remain one dropdown entry away, so a broken build is always
- * recoverable without touching the profile.
+ * so:
+ *
+ *  - the rich text view and the code view both use `'preferred'`, which outranks
+ *    every shipped renderer. For a source file that makes the code surface the
+ *    default view (the shipped "Code" renderer is read-only, so being second in
+ *    that dropdown was its only use);
+ *  - for Markdown the two of ours tie on band and suffix length, so registration
+ *    order decides: the rich text view is registered first and stays the default,
+ *    with the code surface and then the shipped Markdown render one dropdown entry
+ *    away. A broken build is therefore always recoverable without touching the
+ *    profile;
+ *  - the few suffixes the product renders itself (`.html`, `.svg`, `.csv`) are
+ *    claimed by a *separate* entry in the shipped `'builtin'` band, so the rendered
+ *    view keeps its default there and the editor is still one dropdown entry away;
+ *  - `reportToHost` re-reads every ranking through the registry's own
+ *    `candidates()` and logs it, so "which view opens by default" is verifiable
+ *    from the host log instead of by eye.
  *
  * Content loading is `renderer`, the same mode the shipped Office viewer uses: the
  * owner mounts the body before any bytes are read and hands it a revision plus
- * `loaded`/`failed`/`reload`. The body reads and writes through this plugin's own
+ * `loaded`/`failed`/`reload`. Both bodies read and write through this plugin's own
  * host routes under `/api`, so the freshness token guarding a save is the one the
- * open returned.
+ * open returned — and switching between the two views can never read stale bytes,
+ * because the host half serialises those calls per path.
  */
 import { createElement } from 'react';
 import { BodyBoundary } from './BodyBoundary.jsx';
 import { MilkdownBody } from './MilkdownBody.jsx';
+import { SourceBody } from './codemirror/SourceBody.jsx';
+import { PRODUCT_RENDERED_EXTENSIONS, SOURCE_EXTENSIONS } from './codemirror/claims.js';
 import { ROUTE_PREFIX, endpointUrl } from './channel.js';
 import { ensureStyles } from './theme.js';
 
 /** Implementation identity: the registry id and the keyed slot key. */
 export const IMPL_ID = 'dsh-sidebar-milkdown';
 
-/** Suffixes this view claims. HTML is left to the shipped renderer on purpose. */
+/** The code surface's implementation id, a second entry with its own body. */
+export const CODE_IMPL_ID = 'dsh-sidebar-milkdown-code';
+
+/**
+ * The code surface's second entry, for the few suffixes the product renders itself
+ * (`.html`, `.svg`, `.csv` …): same body, shipped band, so the rendered view stays
+ * the default and the editor is one dropdown entry away. One definition has one
+ * band, which is why this cannot be a suffix inside `CODE_IMPL_ID`.
+ */
+export const CODE_SHIPPED_IMPL_ID = 'dsh-sidebar-milkdown-code-shipped';
+
+/** Suffixes the rich text view claims. HTML is left to the shipped renderer. */
 export const EXTENSIONS = ['md', 'markdown'];
 
 /** Locale namespace this plugin owns. */
@@ -50,6 +78,8 @@ export const inject = ['slots', 'locale', 'documentPreviews'];
 const DICTIONARIES = {
   zh: {
     title: '富文本编辑器',
+    codeTitle: '源代码',
+    linesUnit: '行',
     loading: '读取中…',
     saving: '保存中…',
     saved: '已保存',
@@ -82,10 +112,14 @@ const DICTIONARIES = {
     notFound: '文件不存在。',
     unavailable: '文件服务不可用。',
     unsupportedAddress: '文件地址无法解析。',
+    sandboxDenied: '沙箱策略拒绝写入该文件。',
+    sandboxBlocked: '沙箱策略为只读，保存会被拒绝。',
     transport: '与主进程通信失败。',
   },
   en: {
     title: 'Rich editor',
+    codeTitle: 'Source',
+    linesUnit: 'lines',
     loading: 'Loading…',
     saving: 'Saving…',
     saved: 'Saved',
@@ -118,6 +152,8 @@ const DICTIONARIES = {
     notFound: 'The file does not exist.',
     unavailable: 'The filesystem service is unavailable.',
     unsupportedAddress: 'The file address could not be parsed.',
+    sandboxDenied: 'The sandbox policy refused to write this file.',
+    sandboxBlocked: 'The sandbox policy is read-only; saving will be refused.',
     transport: 'Talking to the host failed.',
   },
 };
@@ -206,11 +242,15 @@ function fontDiagnostics() {
  * @param ctx - client plugin context.
  */
 async function reportToHost(ctx) {
-  let ranking;
-  try {
-    ranking = ctx.documentPreviews.candidates('probe.md').map((definition) => definition.id);
-  } catch (error) {
-    ranking = [String(error)];
+  /** Every probe the ranking decision depends on, so the log answers "what opens by default". */
+  const PROBES = ['probe.md', 'probe.py', 'probe.html', 'probe.svg', 'probe.csv', 'probe.unknownext'];
+  const ranking = {};
+  for (const probe of PROBES) {
+    try {
+      ranking[probe] = ctx.documentPreviews.candidates(probe).map((definition) => definition.id);
+    } catch (error) {
+      ranking[probe] = [String(error)];
+    }
   }
   try {
     await callHost('report', {
@@ -238,9 +278,14 @@ export function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, DICTIONARIES), 'dsh-sidebar-milkdown: dictionaries');
   const t = ctx.locale.bind(NS);
 
+  // Both registrations live in ONE effect, and the rich text one is registered
+  // first. Markdown has two entries of ours in the same band with the same suffix
+  // length, so registration order is what makes the rich text view the default;
+  // splitting these into two effects would let the bundler's module order decide a
+  // user-visible behaviour.
   ctx.effect(
-    () =>
-      ctx.documentPreviews.register({
+    () => {
+      const disposeRich = ctx.documentPreviews.register({
         id: IMPL_ID,
         extensions: EXTENSIONS,
         // Above `builtin`: this is the Markdown view, not an extra entry beside it.
@@ -250,7 +295,34 @@ export function apply(ctx) {
         loading: 'renderer',
         // Follow the official wrap toggle instead of dropping the control.
         wrap: true,
-      }),
+      });
+      const disposeCode = ctx.documentPreviews.register({
+        id: CODE_IMPL_ID,
+        extensions: SOURCE_EXTENSIONS,
+        // Also above `builtin`, which is what makes the editable surface the
+        // default for source files instead of the shipped read-only code renderer.
+        priority: 'preferred',
+        title: () => t('codeTitle'),
+        loading: 'renderer',
+        wrap: true,
+      });
+      // The few suffixes the product renders better than a text editor can keep their
+      // rendered default: same shipped band as the product, so it wins on registration
+      // order and this entry simply appears beside it in the dropdown.
+      const disposeCodeShipped = ctx.documentPreviews.register({
+        id: CODE_SHIPPED_IMPL_ID,
+        extensions: PRODUCT_RENDERED_EXTENSIONS,
+        priority: 'builtin',
+        title: () => t('codeTitle'),
+        loading: 'renderer',
+        wrap: true,
+      });
+      return () => {
+        disposeCodeShipped?.();
+        disposeCode?.();
+        disposeRich?.();
+      };
+    },
     'dsh-sidebar-milkdown: renderer metadata',
   );
 
@@ -265,6 +337,30 @@ export function apply(ctx) {
         ),
       ),
     'dsh-sidebar-milkdown: renderer body',
+  );
+
+  ctx.effect(
+    () =>
+      ctx.slots.inject('sidebar.right.tab.document', () =>
+        ctx.slots.register(
+          { name: 'sidebar.right.tab.document', key: CODE_IMPL_ID, locale: NS },
+          (props) => createElement(BodyBoundary, { t: props.t }, createElement(SourceBody, { ...props, call: callHost })),
+        ),
+      ),
+    'dsh-sidebar-milkdown: code renderer body',
+  );
+
+  // The same body again, under the shipped-band entry's key: the slot is keyed by
+  // implementation id, so one component can serve two registrations.
+  ctx.effect(
+    () =>
+      ctx.slots.inject('sidebar.right.tab.document', () =>
+        ctx.slots.register(
+          { name: 'sidebar.right.tab.document', key: CODE_SHIPPED_IMPL_ID, locale: NS },
+          (props) => createElement(BodyBoundary, { t: props.t }, createElement(SourceBody, { ...props, call: callHost })),
+        ),
+      ),
+    'dsh-sidebar-milkdown: code renderer body (shipped band)',
   );
 
   void Promise.resolve().then(() => reportToHost(ctx));

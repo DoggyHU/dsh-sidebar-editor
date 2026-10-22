@@ -38,6 +38,8 @@ let root;
 let mounted;
 /** The address currently rendered, so a revision bump can re-render it. */
 let currentAddress;
+/** Which renderer is currently mounted: the rich text view or the code surface. */
+let currentImpl = 'dsh-sidebar-milkdown';
 /**
  * Simulate an owner that reloads the tab when the file changes on disk.
  *
@@ -129,7 +131,7 @@ async function fakeCall(endpoint, payload) {
       // component element, so this reproduces the field report exactly: a revision
       // arrives while the user is still typing.
       revision += 1;
-      renderBody(currentAddress);
+      renderBody(currentAddress, currentImpl);
     }
     return { ok: true, version: file.version, bytes: payload.content.length };
   }
@@ -162,13 +164,15 @@ globalThis.fetch = async (input, init) => {
 };
 
 /**
- * Render the body the plugin registered.
+ * Render one of the bodies the plugin registered.
  * @param address - the address to open.
+ * @param implId - which renderer: its `documentPreviews` id, also the slot key.
  */
-function renderBody(address) {
-  const component = components.get('dsh-sidebar-milkdown');
-  if (component === undefined) throw new Error('the plugin registered no body');
+function renderBody(address, implId = 'dsh-sidebar-milkdown') {
+  const component = components.get(implId);
+  if (component === undefined) throw new Error(`the plugin registered no body for ${implId}`);
   currentAddress = address;
+  currentImpl = implId;
   root.render(createElement(component, propsFor(address)));
 }
 
@@ -206,8 +210,27 @@ const ctx = {
       definitions.push(definition);
       return () => {};
     },
-    candidates() {
-      return [...definitions];
+    /**
+     * The registry's own ranking, reproduced: band first (a non-`builtin` priority
+     * wins), then matched suffix length, then registration order. The client half
+     * reports this at startup, so the arrangement that decides the default view is
+     * asserted here instead of being assumed.
+     * @param path - a probe path used only for its suffix.
+     * @returns the matching definitions, most preferred first.
+     */
+    candidates(path) {
+      const name = typeof path === 'string' ? path.toLowerCase() : '';
+      const suffix = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
+      return definitions
+        .map((definition, order) => ({
+          definition,
+          order,
+          rank: definition.priority === 'builtin' ? 0 : 1,
+          length: definition.extensions.includes(suffix) ? suffix.length : 0,
+        }))
+        .filter((candidate) => candidate.length > 0)
+        .sort((left, right) => right.rank - left.rank || right.length - left.length || left.order - right.order)
+        .map((candidate) => candidate.definition);
     },
   },
 };
@@ -216,7 +239,7 @@ const ctx = {
 function open(address, text, options = {}) {
   files.set(address, { name: options.name ?? 'doc.md', text, version: `v${++versionSeq}`, writable: options.writable !== false });
   revision = 0;
-  renderBody(address);
+  renderBody(address, options.impl);
 }
 
 apply(ctx);
@@ -235,7 +258,35 @@ window.__test = {
   /** Bump the owner's revision the way a real reload would. */
   bumpRevision() {
     revision += 1;
-    renderBody(currentAddress);
+    renderBody(currentAddress, currentImpl);
+  },
+  /**
+   * Re-render an address that is already in the fake filesystem, under another
+   * renderer, without resetting its bytes — the "switch view" path.
+   * @param address - the file address.
+   * @param implId - which renderer to mount.
+   */
+  show(address, implId) {
+    if (files.has(address) !== true) return false;
+    renderBody(address, implId);
+    return true;
+  },
+  /** Which renderer is mounted. */
+  currentImpl() {
+    return currentImpl;
+  },
+  /** The code surface's buffer, as the browser has it. */
+  codeText() {
+    return document.querySelector('.dsh-src-host .cm-content')?.textContent ?? null;
+  },
+  /** How many logical lines the code surface renders. */
+  codeLines() {
+    return document.querySelectorAll('.dsh-src-host .cm-line').length;
+  },
+  /** Whether the code surface's content is editable. */
+  codeEditable() {
+    const content = document.querySelector('.dsh-src-host .cm-content');
+    return content === null ? null : content.getAttribute('contenteditable');
   },
   /** The current owner revision, for diagnostics. */
   revisionValue() {

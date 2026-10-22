@@ -38,7 +38,7 @@ import { basename, join } from 'node:path';
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
 const ROUTE_PREFIX = '/api/dsh-sidebar-milkdown';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '0.2.2';
+const VERSION = '0.3.0';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
   process.env.DSH_SIDEBAR_MILKDOWN_REPORT ?? join(tmpdir(), 'dsh-sidebar-milkdown-report.json');
@@ -528,6 +528,34 @@ async function saveFile(ctx, payload, signal) {
 }
 
 /**
+ * Per-address FIFO queue for the two routes that touch the same bytes.
+ *
+ * Switching one tab from the rich text view to the code view unmounts one body and
+ * mounts the other. The unmounting body's last write is still in flight while the
+ * new body asks for the file, and the two requests arrive on separate browser
+ * connections: nothing in HTTP orders them. This is the only place that can, and it
+ * is available here precisely because both views are one plugin with one host half.
+ *
+ * Runs are keyed by the address, so unrelated files never wait on each other.
+ * @param key - the address whose operations must not overlap.
+ * @param run - the operation.
+ * @returns the operation's result.
+ */
+function serialisedByAddress(key, run) {
+  const previous = serialisedByAddress.queues.get(key) ?? Promise.resolve();
+  const next = previous.then(run, run);
+  const guarded = next.catch(() => {});
+  serialisedByAddress.queues.set(key, guarded);
+  void guarded.then(() => {
+    if (serialisedByAddress.queues.get(key) === guarded) serialisedByAddress.queues.delete(key);
+  });
+  return next;
+}
+
+/** In-flight keys; module state because the queue must outlive one request. */
+serialisedByAddress.queues = new Map();
+
+/**
  * Host plugin body: mount the HTTP endpoints for this plugin's lifetime.
  *
  * `connection.fetch.register` is the extension point that works from a plugin in
@@ -553,8 +581,14 @@ export function apply(ctx) {
   const endpoints = {
     ping: async () => ({ ok: true, plugin: name, version: VERSION, pid: process.pid }),
     probe: async () => ({ ok: true, services: probeServices(ctx) }),
-    open: (payload, signal) => openFile(ctx, payload, signal),
-    save: (payload, signal) => saveFile(ctx, payload, signal),
+    open: (payload, signal) =>
+      serialisedByAddress(typeof payload?.address === 'string' ? payload.address : '', () =>
+        openFile(ctx, payload, signal),
+      ),
+    save: (payload, signal) =>
+      serialisedByAddress(typeof payload?.address === 'string' ? payload.address : '', () =>
+        saveFile(ctx, payload, signal),
+      ),
     report: async (payload) => {
       const report = { receivedAt: new Date().toISOString(), payload: payload ?? null };
       try {

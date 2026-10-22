@@ -1,4 +1,4 @@
-# 状态与决策（0.2.0，2026-10-22 凌晨）
+# 状态与决策（0.3.0，2026-10-22 下午）
 
 这份文件记录"为什么这么做"和"踩过什么坑"，避免下一次会话重新推导一遍。
 
@@ -8,13 +8,13 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.2.2 |
-| 产物 | `lib/client.js` 1071.8 KB（130 个打包包） |
-| 依赖 | `@milkdown/kit` 7.22.3（含 `@milkdown/core`、`preset-commonmark`、`preset-gfm`、`plugin/history`、`plugin/listener`、`prose/*`） |
-| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 107 项，全绿；行为套件连跑 3 次稳定 |
-| profile | 已挂进 `~/.dsh/profiles/desktop`，是侧栏 `.md` 的唯一渲染实现；旧的 `dsh-sidebar-editor` 已从依赖与 bundles 移除、本地目录已删除（代码与全部标签仍在 https://github.com/DoggyHU/dsh-sidebar-editor ，要回退就 clone 回来加回 profile） |
-| 仓库 | https://github.com/DoggyHU/dsh-sidebar-milkdown （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1`） |
-| profile | 已挂进 `~/.dsh/profiles/desktop`，`dsh-sidebar-editor` **已从 bundles 移除**（依赖项保留，恢复只需一行） |
+| 版本 | 0.3.0（**两个视图**：富文本 + 源码） |
+| 产物 | `lib/client.js` 2756.1 KB（171 个打包包） |
+| 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
+| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 150 项，全绿 |
+| profile | 已挂进 `~/.dsh/profiles/desktop`（`link:`），`bundles` 里只有本插件；旧 `dsh-sidebar-editor` 已移除、本地目录已删除（代码与全部标签仍在 https://github.com/DoggyHU/dsh-sidebar-editor ） |
+| 仓库 | https://github.com/DoggyHU/dsh-sidebar-milkdown （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1` / `v0.2.2` / `v0.3.0`） |
+| 回退 | 想要回 0.2.2 的单一富文本视图：`git checkout v0.2.2 -- src lib && pnpm build`；动手前的磁盘快照在 `_backup\dsh-sidebar-milkdown-0.2.2-20261022` |
 
 ### 0.2.0 改了什么（用户四条反馈）
 
@@ -228,7 +228,7 @@ if (editable && !editable.hasAttribute('data-dshq-annotate')) return hide()
 
 1. **真机验收**：重启 DSH → 打开一个 `.md` → 中文输入法在段首/段中/换行处各打一遍 → 跨段落拖选 → 保存后看文件 diff 和阅读位置。
 2. 批注联动（见第五节）：批注插件放行 `[data-dshq-annotate]`，本插件加属性。
-3. 恢复/重建**代码编辑器**能力（非 md 文件）。旧插件停用后这块回落到官方「代码」视图；如果还想要 CodeMirror，可以做成同一插件里的另一个 `builtin` 优先级实现。
+3. ~~恢复/重建**代码编辑器**能力（非 md 文件）~~ —— **0.3.0 已做**：同一插件里第二个 `documentPreviews` 实现，见第八节。
 4. 空段落若要保留，需要自定义序列化（例如写成 HTML 注释占位再在打开时还原），代价是污染文件；**先不做**。
 
 ---
@@ -238,3 +238,92 @@ if (editable && !editable.hasAttribute('data-dshq-annotate')) return hide()
 - 别为了新插件去改 `dsh-sidebar-editor`（它是对照基线）。
 - 没得到明确指令不要推 GitHub（`dsh-sidebar-editor` 已推到 `DoggyHU/dsh-sidebar-editor`；本插件只在本地）。
 - 改代码后必须 `pnpm test`（两段都是浏览器级），再 `pnpm build`。
+
+---
+
+## 八、0.3.0：把 CodeMirror 代码视图接回来
+
+### 8.1 用户拍板的四条
+
+| 决策 | 结论 |
+|---|---|
+| 下拉顺序 | **Milkdown（`.md`）→ CodeMirror → 官方原生** |
+| 保存语义 | 统一用富文本那套（无定时器）；CodeMirror 只是"多一个选项"，尤其针对代码类文件 |
+| 切换视图的读时序 | 要保证"先写完再读" |
+| 代码文件默认视图 | 改成可编辑的 CodeMirror（官方只读「代码」视图退到下拉里） |
+| 草稿（localStorage） | **删掉**（保存点已覆盖所有退出路径） |
+| 语法表 | **全量照搬**，不裁剪 |
+
+### 8.2 形状：一个插件、三次注册（两个视图）
+
+```
+id = dsh-sidebar-milkdown                ext = md,markdown      preferred   body = MilkdownBody
+id = dsh-sidebar-milkdown-code           ext = 115 后缀减 4     preferred   body = SourceBody
+id = dsh-sidebar-milkdown-code-shipped   ext = html,htm,svg,csv builtin     body = SourceBody（同一个组件，另一个 slot key）
+```
+
+rank 只看 `priority === 'builtin' ? 0 : 1`，所以前两个是第 1 档；`.md` 上两者后缀长度相同，**靠注册顺序**决定谁是 `candidates[0]`。
+→ 三次 `register` 必须写在**同一个 `ctx.effect` 里、富文本在前**（拆成多个 effect 就等于把默认视图交给打包/加载顺序）。
+`reportToHost` 会把 `probe.md` / `probe.py` / `probe.html` / `probe.svg` / `probe.csv` 的 `candidates()` 顺序一起上报到 `%TEMP%\dsh-sidebar-milkdown-report.json`，排序错了能查（测试里也断言了这三条的期望值）。
+
+**为什么第三个条目必须存在**：一个实现只有一个优先级档，而 `.html`/`.svg`/`.csv` 是产品自己渲染得更好的（页面 / 图片 / 表格）。
+如果把它们放进第 1 档，`.svg` 会默认以文本打开、`.csv` 会丢掉表格视图 —— 那不是"编辑代码"，是退化。
+所以拆成"抢默认的一档"+"跟官方同档、只在下拉里出现"的一档。两档的后缀表必须**互不重叠**（重叠会让同一个文件在下拉里出现两次"源代码"），测试里有一条断言守着。
+想改成"所有后缀都抢默认"，把 `PRODUCT_RENDERED_EXTENSIONS` 并进 `SOURCE_EXTENSIONS`、删掉第三条注册即可。
+
+对源码后缀用第 1 档的后果：**`.py` 等文件默认视图变成可编辑 CodeMirror**，官方只读「代码」视图退到下拉第二项。这是用户明确要的。
+
+### 8.3 三个坑（都已在测试里固化）
+
+**坑 A：CodeMirror 核心出现两份副本 → 语法高亮静默失效。**
+`@codemirror/language` 被装成 6.13.1（`lang-*` 要的）和 6.12.4（我们自己钉的）两份，`@codemirror/view` 同样是 6.43.15 / 6.43.13 两份。
+后果：`language` facet 是 A 副本的、`syntaxHighlighting` 的 state field 是 B 副本的，两者互不认识 —— **文字正常显示、一个 `<span>` 都没有、不报错**。
+修法：`package.json` 的 `pnpm.overrides` 把 `@codemirror/language`/`view`/`state`/`@lezer/common`/`@lezer/highlight` 各钉一份，装完只留单副本（产物同时从 3098.5 KB 瘦到 2756.1 KB，因为少打了一整份核心）。
+看门狗：浏览器测试 `python is syntax highlighted`（断言 `.cm-content span` > 0）。
+
+**坑 B：编辑器宿主节点不能只在 `ready` 分支渲染。**
+挂载写在"读到文件之后"的异步续体里：先 `setDoc(ready)` 再建视图。如果宿主 `<div>` 只在 `ready` 分支存在，React 还没提交这次渲染时 `hostRef.current === null`，于是 `if (host === null) return` —— **静默不挂载、无报错**，但状态栏正常显示文件名和行数（走 `doc.text` 兜底），最容易误判成"CSS 没生效"。
+修法：宿主常渲染，加载/错误状态用绝对定位覆盖在上面。
+
+**坑 C：`.cm-editor` 铺满整块，角落点击其实在编辑器内部。**
+所以"点编辑器外面就保存"在代码视图里不能靠 `page.mouse.click(4,4)`；真实使用中承担这一职责的是 `EditorView.domEventHandlers({ blur })`（点击状态栏、点聊天框、Tab 出去都会触发）。两处都要有：外部 `pointerdown/keydown` 捕获 + 视图 `blur`。
+
+### 8.4 保存语义（与富文本逐条对齐）
+
+- **无定时器**：旧 `dsh-sidebar-editor` 的代码编辑器是 900 ms 自动写回，这里刻意去掉。同一文件两种写盘节奏 = 两种冲突窗口 + 两种"我改完没落盘"的错觉。
+- **无草稿**：`localStorage` 那份也删了。
+- 保存点：`Ctrl/Cmd+S`、视图失焦、编辑器外任意 `pointerdown`/`keydown`、`visibilitychange=hidden`、`pagehide`、**卸载前**。
+- **"卸载前"这一条在富文本里曾是死代码（独立复核抓到的）**：Milkdown 原先在 cleanup 里 `void saveDocument(false)`，而 `save` 把活排进微任务、`runSave` 又要先读 `editorRef.current` —— cleanup 的同步段却已经把 `editorRef` 置空并 `destroy()` 了，于是这次写 **100% 不会发生**（0.2.x 起就这样，当时没有"程序化换视图"这条路径去暴露）。
+  修法：cleanup **同步** `flushPendingInput` + `readMarkdown` 取 body，作为参数交给队列（`runSave(force, { body })`），不再回头读视图。测试 `switching views flushes the unsaved rich text buffer` 是看门狗（不留任何手势，只靠卸载）。
+- 串行化：一个手势会同时触发两三个保存点（点外面 = pointerdown + blur），队列串起来，后一个发现"没有可写内容"直接返回。
+- 冲突自愈：`conflict` 但磁盘字节与要写的一模一样 → 视为成功（就是"上次其实写进去了"）。
+- 保存成功后按"缓冲区是否仍等于写入内容"决定状态栏（否则边写边打字会把新改动标成"已保存"，`beforeunload` 也就不再警告）。
+- 外部修改的横幅必须给得出三个出口（覆盖磁盘 / 重新加载 / 保留我的修改）。代码视图第一版只给了"覆盖磁盘"且横幅消不掉，复核第 4 条，已补。
+
+### 8.5 先写后读：客户端共享队列 + 宿主 FIFO
+
+切换视图 = 一个 body 卸载、另一个挂载，全在同一个提交里。旧 body 的最后一笔写和 new body 的第一次读从**同一个任务**发出，走**两条 HTTP 连接**；宿主能把"已到达的请求"串起来，但**改变不了发出的先后**（复核第 10 条）。
+
+两层：
+
+1. `src/client/write-queue.js`（**关键的一层**）：按地址的模块级队列，两个 body 共用（同一个 bundle 才有这个便利）。所有写进队列；所有读在 `call('open')` 之前 `await whenIdle(address)`。于是"卸载那一笔"一定排在新视图的读之前。
+2. 宿主 `serialisedByAddress`（第二道）：同一地址的 `open`/`save` 在宿主侧也不交错。
+
+都按地址分键，不同文件互不阻塞。`saveFile` 冲突时内部直接调 `openFile`，不再进队列 —— 否则自己等自己。
+
+### 8.6 体积
+
+| | 大小 |
+|---|---|
+| 0.2.2（只有 Milkdown） | 1071.8 KB |
+| 0.3.0 第一版（核心重复） | 3098.5 KB |
+| 0.3.0 定稿（单副本） | **2756.1 KB** |
+
+要再瘦：删 `languages.js` 里不用的语法条目（php/rust/go/java/cpp/sql/xml/lua/ruby/perl/swift/scala/dart ≈ 350–450 KB）。**别动 `pnpm.overrides`**。
+
+### 8.7 测试增量（107 → 150）
+
+注册面（三个条目、顺序、档位、后缀不重叠、两个标题、**上报的三种排序**）、代码视图挂载/行号/高亮/可编辑、
+打字不落盘、`Ctrl+S` 落盘、点外面落盘、工作区外只读且无保存按钮、冲突横幅 + 覆盖磁盘、
+外部修改不动缓冲区且横幅有三个出口、markdown 围栏内也上色、
+**切视图读到刚保存的内容**、**无手势卸载时富文本缓冲区被写盘**（8.4 的死代码回归测试）。
