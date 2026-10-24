@@ -267,6 +267,34 @@ check(
   JSON.stringify(files.get('D:/workspace/crlf.md').text),
 );
 
+// ── 8. optional full-disk mode (`fileAccess: 'full'`) ──────────────────────
+// Opted into from the profile patch: the editor stops caring about the workspace
+// boundary and asserts `danger-full-access` itself, so it can be used as a
+// whole-disk file editor. The default (`'session'`) stays exactly as tested above.
+console.log('full access');
+apply(ctx, { fileAccess: 'full' });
+policyMode = 'workspace-write';
+const fullOpen = await call('open', { address: outsideAddress });
+check(
+  'full access opens an outside file writable',
+  fullOpen.ok === true && fullOpen.writable === true,
+  JSON.stringify(fullOpen).slice(0, 160),
+);
+check('full access reports danger-full-access', fullOpen.sandbox?.mode === 'danger-full-access', JSON.stringify(fullOpen.sandbox));
+const fullSave = await call('save', {
+  address: outsideAddress,
+  content: 'full access\n',
+  baseVersion: fullOpen.version,
+  eol: 'lf',
+  bom: false,
+});
+check(
+  'full access writes outside the workspace',
+  fullSave.ok === true && files.get('D:/elsewhere/outside.md').text === 'full access\n',
+  JSON.stringify(fullSave),
+);
+apply(ctx);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} check(s) failed:`);
   for (const name of failures) console.error(`  - ${name}`);

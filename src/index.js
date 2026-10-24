@@ -38,7 +38,7 @@ import { basename, join } from 'node:path';
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
 const ROUTE_PREFIX = '/api/dsh-sidebar-editor';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '1.0.2';
+const VERSION = '1.1.0';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
   process.env.DSH_SIDEBAR_EDITOR_REPORT ?? join(tmpdir(), 'dsh-sidebar-editor-report.json');
@@ -208,6 +208,26 @@ async function workspaceRootOf(ctx, sessionId) {
 }
 
 /**
+ * How far this plugin may write: `'session'` follows the session's sandbox mode
+ * (the default and the honest boundary), `'full'` means "this is my file browser,
+ * let me write anywhere" and is opted into from the profile patch.
+ *
+ * Module level because the helpers below are shared by every route and one process
+ * holds exactly one plugin instance; there is no second caller to confuse.
+ * @type {'session' | 'full'}
+ */
+let fileAccessMode = 'session';
+
+/**
+ * Read the `fileAccess` option out of the plugin's own config.
+ * @param config - the config the profile patch attached to this plugin's row.
+ * @returns the normalized mode.
+ */
+function fileAccessOf(config) {
+  return config?.fileAccess === 'full' ? 'full' : 'session';
+}
+
+/**
  * The sandbox policy one write must carry.
  *
  * The deployment may mount `dsh-fs-sandbox` instead of the plain local backend,
@@ -220,11 +240,16 @@ async function workspaceRootOf(ctx, sessionId) {
  * The official tool layer resolves `{ session }` on every mutation, so the
  * session's own mode and immutable cwd travel with the call. This does the same,
  * and degrades to the deployment fallback when the service is absent.
+ *
+ * In `fileAccess: 'full'` the plugin asserts `danger-full-access` itself, which is
+ * the only way to be a full-disk editor regardless of what the session allows. That
+ * is an explicit opt-in: a plugin should not widen its own sandbox by default.
  * @param ctx - host plugin context.
  * @param session - the Session authorizing the write, when known.
  * @returns the per-call policy, or `undefined` to let the backend decide.
  */
 function sandboxPolicyFor(ctx, session) {
+  if (fileAccessMode === 'full') return { mode: 'danger-full-access' };
   const service = ctx.get('sandboxPolicy');
   if (service === undefined || service === null || typeof service.resolve !== 'function') return undefined;
   try {
@@ -590,9 +615,14 @@ serialisedByAddress.queues = new Map();
  * authenticated exactly like the rest of the UI — no route of ours is reachable
  * without admission.
  * @param ctx - host plugin context.
+ * @param ctx - host plugin context.
+ * @param config - the plugin row's config (the profile patch may set `fileAccess`).
  */
-export function apply(ctx) {
-  diagnose(`apply: connection=${ctx.get('connection') !== undefined} fs=${ctx.get('fs') !== undefined}`);
+export function apply(ctx, config) {
+  fileAccessMode = fileAccessOf(config);
+  diagnose(
+    `apply: connection=${ctx.get('connection') !== undefined} fs=${ctx.get('fs') !== undefined} fileAccess=${fileAccessMode}`,
+  );
 
   /** One operation per route; each handler takes the decoded body and the signal. */
   const endpoints = {

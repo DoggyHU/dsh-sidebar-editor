@@ -95,10 +95,32 @@
 读写走官方文件服务 `ctx.fs.writeText(target, text, { kind: 'replaceIfVersion', version })`，因此：
 
 - 版本冲突是 `FS_STALE_VERSION`，不会静默覆盖别人的修改；
-- 沙箱策略（`ctx.sandboxPolicy`）随会话解析，`read-only` / 工作区外会被拒；
+- 沙箱策略（`ctx.sandboxPolicy`）随会话解析：`read-only` 全拒；`workspace-write` 只写工作区内；`danger-full-access` 不限制（详见下一节）；
 - 记账文件：`%TEMP%\dsh-sidebar-editor-host.log`（加载与失败痕迹）、`%TEMP%\dsh-sidebar-editor-report.json`（浏览器半上报的排序结果）。
 
 **先写后读有两层**：客户端 `src/client/write-queue.js` 按地址排队（写完才允许读，读之前 `await whenIdle`），宿主半 `serialisedByAddress` 再兜一层。切换视图时"旧视图的最后一笔写"一定排在新视图的读之前——只有"一个插件、一个 bundle、一个宿主半"才做得到这件事。
+
+## 全盘可写模式（可选，`fileAccess: 'full'`）
+
+默认情况下编辑器跟随**会话的沙箱策略**：`workspace-write` 会话只能改工作区内的文件（工作区外只读），`danger-full-access` 会话可以改任意位置。
+
+如果你想让这个编辑器当成"全盘文件浏览器"用、不理会会话策略，在 profile 的 `cordis.patch.yml` 里给插件行加一行配置即可：
+
+```yaml
+# ~/.dsh/profiles/desktop/cordis.patch.yml
+- id: sidebar-editor
+  name: dsh-sidebar-editor
+  config:
+    fileAccess: full
+```
+
+改完**完全退出并重开 DSH**。生效后：
+
+- 打开任何位置的文本文件都是**可编辑**的，保存直接落盘（插件会向 `fs.writeText` 自己声明 `danger-full-access` 策略）；
+- 宿主日志会打印 `apply: … fileAccess=full`，可用来确认配置真的被读到了；
+- 想回退就把这段删掉（或写 `fileAccess: session`），默认值就是跟随会话策略。
+
+> 为什么默认不开：插件不应该偷偷扩大自己的权限。`danger-full-access` 是"用户明确说了算"的档位，所以它必须由用户在配置里显式打开，而不是插件替用户决定。
 
 ## 开发
 
@@ -134,7 +156,7 @@ cd ~/.dsh/profiles/desktop; pnpm install
 
 然后**重启 DSH**（宿主半是新增行，必须重启）；只改客户端时 `Ctrl+Shift+R` 即可。
 
-## 已知边界（1.0.0）
+## 已知边界（1.1.0）
 
 - **空段落不保留**：Milkdown 默认把空段落写成 `<br />`，而官方预览不渲染裸 HTML，重开就会看到字面 `<br />`。本插件移除了那个插件，所以空行在保存后消失（空段落没有 Markdown 表示）。
 - **软换行合并**：一段里用软换行折行的两行，解析成一个段落的两行文本；保存后合成一行。这是 Markdown 的本来语义。

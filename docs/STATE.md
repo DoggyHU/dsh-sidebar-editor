@@ -8,10 +8,10 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 1.0.1（**两个视图**：富文本 + 源码；1.0.1 = 跟随 DSH 0.2.1-rc.3，写边界改成"会话的沙箱策略"） |
+| 版本 | 1.1.0（**两个视图**：富文本 + 源码；1.1.0 = 可选的全盘可写模式 `fileAccess: full`） |
 | 产物 | `lib/client.js` 2756.3 KB（171 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
-| 测试 | `pnpm test`：宿主半 31 项 + 打包契约 11 项 + 行为 150 项，全绿 |
+| 测试 | `pnpm test`：宿主半 34 项 + 打包契约 11 项 + 行为 150 项，全绿 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`（`link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor`），`bundles` 里只有本插件 |
 | 仓库 | https://github.com/DoggyHU/dsh-sidebar-editor （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1` / `v0.2.2` / `v0.3.0` / `v1.0.0`） |
 | 回退 | 想要回 0.2.2 的单一富文本视图：`git checkout v0.2.2 -- src lib && pnpm build`；0.3.0 的"三个条目、两视图"是 `v0.3.0`；改名前的磁盘快照在 `_backup\dsh-sidebar-milkdown-0.2.2-20261022` |
@@ -389,3 +389,39 @@ writable = fs.contains(root, target) || policy.mode === 'danger-full-access'
 `tests/host.mjs` 里 `sandboxPolicy` 变成可按用例切换的 `policyMode`，新增三条：
 工作区外文件在 `danger-full-access` 下 `open` 可写 → `save` 真的落盘 → 切回 `workspace-write` 再写又被拒。
 （27 → 31 项）
+
+---
+
+## 十、1.1.0：可选的全盘可写模式
+
+用户问"能不能不写沙箱、当全盘浏览器用"。技术上可以，但**不能让插件自己决定**，所以做成了显式开关。
+
+### 10.1 为什么默认不开
+
+`dsh-fs-sandbox` 的写路径是：`policy = 传入的 policy ?? ctx.sandboxPolicy.resolve()`；
+`danger-full-access` 直接放行，`read-only` 直接拒，`workspace-write` 查工作区根。
+也就是说"想全盘写"只有一条合法的路：**自己声明 `danger-full-access`**。插件有这个能力（它跑在主进程、有用户权限），
+但默认替用户扩大权限是错的——用户以为自己在 `workspace-write` 里，插件却绕过它，那沙箱就形同虚设。
+
+所以：`fileAccess: 'session'`（默认，跟随会话策略）/ `'full'`（显式全盘）。
+
+### 10.2 实现
+
+- `src/index.js`：模块级 `fileAccessMode`；`apply(ctx, config)` 从插件行 config 读 `fileAccess`；
+  `sandboxPolicyFor()` 在 `'full'` 时直接返回 `{ mode: 'danger-full-access' }`。其余逻辑零改动：
+  `resolveTarget` 的 `writable`、`openFile` 的 `allowsWrite`、`saveFile` 传给 `fs.writeText` 的策略，全都走这同一个函数。
+- 启动日志带 `fileAccess=…`，配置有没有被读到一眼可见。
+- 启用方式（profile 的 `cordis.patch.yml`）：
+
+```yaml
+- id: sidebar-editor
+  name: dsh-sidebar-editor
+  config:
+    fileAccess: full
+```
+
+### 10.3 测试
+
+`tests/host.mjs` 末尾新增一组（31 → 34 项）：以 `{ fileAccess: 'full' }` 重新 `apply`，
+在 `workspace-write` 会话下打开工作区外文件 → `writable === true`、`sandbox.mode === 'danger-full-access'`、`save` 真的落盘。
+默认模式的那几条断言在前面，不受影响。
