@@ -38,7 +38,7 @@ import { basename, join } from 'node:path';
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
 const ROUTE_PREFIX = '/api/dsh-sidebar-editor';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
   process.env.DSH_SIDEBAR_EDITOR_REPORT ?? join(tmpdir(), 'dsh-sidebar-editor-report.json');
@@ -388,6 +388,7 @@ async function resolveTarget(ctx, address) {
       absolutePath: fs.processPath(absoluteTarget),
       path: parsed.path,
       writable: unrestricted,
+      insideWorkspace: false,
       root: undefined,
       session,
       policyMode,
@@ -402,8 +403,9 @@ async function resolveTarget(ctx, address) {
     return { ok: false, code: codeOf(error), message: String(error?.message ?? error) };
   }
   const absolutePath = fs.processPath(target);
-  const writable = fs.contains(rootTarget, target) === true || unrestricted;
-  return { ok: true, target, absolutePath, path: parsed.path, writable, root, session, policyMode };
+  const insideWorkspace = fs.contains(rootTarget, target) === true;
+  const writable = insideWorkspace || unrestricted;
+  return { ok: true, target, absolutePath, path: parsed.path, writable, insideWorkspace, root, session, policyMode };
 }
 
 /**
@@ -452,6 +454,13 @@ async function openFile(ctx, payload, signal) {
     mode === undefined
       ? true
       : mode === 'danger-full-access' || (mode === 'workspace-write' && resolved.writable === true);
+  // Only the interesting case is logged: a file the *policy* made writable even
+  // though it sits outside the workspace. That is the one where "why is this
+  // editable / not editable" depends on a service value this plugin cannot read
+  // from anywhere else, so the log has to say it.
+  if (resolved.writable === true && resolved.insideWorkspace === false) {
+    diagnose(`open outside workspace as writable: mode=${mode ?? 'unknown'} ${resolved.absolutePath}`);
+  }
   return {
     ok: true,
     absolutePath: resolved.absolutePath,
