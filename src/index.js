@@ -38,7 +38,7 @@ import { basename, join } from 'node:path';
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
 const ROUTE_PREFIX = '/api/dsh-sidebar-editor';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
   process.env.DSH_SIDEBAR_EDITOR_REPORT ?? join(tmpdir(), 'dsh-sidebar-editor-report.json');
@@ -361,11 +361,18 @@ async function resolveTarget(ctx, address) {
   const parsed = parseSessionFileAddress(address);
   if (parsed === undefined) return { ok: false, code: CODES.unsupportedAddress };
   const session = sessionOf(ctx, parsed.sessionId);
+  // The write boundary belongs to the *session's* sandbox policy, not to this plugin's
+  // opinion about workspaces. `workspace-write` confines writes to the workspace root;
+  // `danger-full-access` lifts that confinement for the session, and refusing there
+  // makes the editor read-only on files the platform would happily write (that is what
+  // made a file outside the workspace look "broken" instead of editable).
+  const policyMode = sandboxPolicyFor(ctx, session)?.mode;
+  const unrestricted = policyMode === 'danger-full-access';
   const root = await workspaceRootOf(ctx, parsed.sessionId);
   if (root === undefined) {
     // Without a root, containment cannot be proven — but an absolute path is
     // still resolvable, and the session in the address is what authorizes the
-    // read. Such a file opens read-only rather than failing to open at all.
+    // read. Such a file opens read-only unless the session is unrestricted.
     if (isAbsolutePath(parsed.path) !== true) {
       return { ok: false, code: CODES.unknownSession, message: 'no workspace root for a relative path' };
     }
@@ -380,9 +387,10 @@ async function resolveTarget(ctx, address) {
       target: absoluteTarget,
       absolutePath: fs.processPath(absoluteTarget),
       path: parsed.path,
-      writable: false,
+      writable: unrestricted,
       root: undefined,
       session,
+      policyMode,
     };
   }
   let target;
@@ -394,8 +402,8 @@ async function resolveTarget(ctx, address) {
     return { ok: false, code: codeOf(error), message: String(error?.message ?? error) };
   }
   const absolutePath = fs.processPath(target);
-  const writable = fs.contains(rootTarget, target) === true;
-  return { ok: true, target, absolutePath, path: parsed.path, writable, root, session };
+  const writable = fs.contains(rootTarget, target) === true || unrestricted;
+  return { ok: true, target, absolutePath, path: parsed.path, writable, root, session, policyMode };
 }
 
 /**

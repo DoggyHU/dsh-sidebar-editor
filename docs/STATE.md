@@ -8,10 +8,10 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 1.0.0（**两个视图**：富文本 + 源码；名字从 `dsh-sidebar-milkdown` 改成 `dsh-sidebar-editor`） |
+| 版本 | 1.0.1（**两个视图**：富文本 + 源码；1.0.1 = 跟随 DSH 0.2.1-rc.3，写边界改成"会话的沙箱策略"） |
 | 产物 | `lib/client.js` 2756.3 KB（171 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
-| 测试 | `pnpm test`：宿主半 27 项 + 打包契约 11 项 + 行为 150 项，全绿 |
+| 测试 | `pnpm test`：宿主半 31 项 + 打包契约 11 项 + 行为 150 项，全绿 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`（`link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor`），`bundles` 里只有本插件 |
 | 仓库 | https://github.com/DoggyHU/dsh-sidebar-editor （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1` / `v0.2.2` / `v0.3.0` / `v1.0.0`） |
 | 回退 | 想要回 0.2.2 的单一富文本视图：`git checkout v0.2.2 -- src lib && pnpm build`；0.3.0 的"三个条目、两视图"是 `v0.3.0`；改名前的磁盘快照在 `_backup\dsh-sidebar-milkdown-0.2.2-20261022` |
@@ -342,3 +342,50 @@ rank 只看 `priority === 'builtin' ? 0 : 1`，所以前两个是第 1 档；`.m
 打字不落盘、`Ctrl+S` 落盘、点外面落盘、工作区外只读且无保存按钮、冲突横幅 + 覆盖磁盘、
 外部修改不动缓冲区且横幅有三个出口、markdown 围栏内也上色、
 **切视图读到刚保存的内容**、**无手势卸载时富文本缓冲区被写盘**（8.4 的死代码回归测试）。
+
+---
+
+## 九、1.0.1：DSH 0.2.1-rc.3 兼容 + 写边界归属纠正
+
+### 9.1 现象
+
+用户把 DSH 从 0.2.1-rc.2 升到 **rc.3**（2026-10-23 装完），随后报"插件失效"，补充说明是"**有些可以，但这个不行**"：
+同一个会话里，工作区内的 `.md` 一切正常（截图里富文本视图照常渲染、表格正常、底部"已保存"），
+但 `D:\Coding_Plan\商务报价agent\…\报价书_设计费_20261024重算版.md` 这个文件打不开/不能编辑。
+
+### 9.2 定位过程（值得复用）
+
+1. **宿主日志**：`%TEMP%\dsh-sidebar-editor-host.log` 里有 `module loaded (v1.0.0 …)` + 6 条路由注册 → 插件本体是加载的。
+2. **客户端上报**：`%TEMP%\dsh-sidebar-editor-report.json` 是当场写的，`probe.md` 排序仍是
+   `[富文本, 源码, 官方 Markdown, 官方代码]` → 注册面没被 rc.3 破坏。
+3. **rc.3 的契约没变**：从 `app.asar` 里抽出 `dsh-client-ui-sidebar-documentpreview@0.2.1-rc.3`，
+   `resourceAddress`/`scrollportRef`/`loading:"renderer"`/`rendererId`/`sidebar.right.tab.document` 的出现次数与 rc.2 **逐个相同**
+   （新东西是 `client.frontmatter-fields.js` 与拆出去的 excel/pdf chunk，与我们无关）。
+4. **不是内容问题**：把这个文件的正文喂进 `tests/harness/app.jsx` 用真 Chromium 渲染 →
+   72 个块、2 张表、零报错。所以失败与 Markdown 内容无关。
+5. **工作区对不上**：会话 `session-4b802e62…` 的 `cwd` 是
+   `D:\ProjOutline\恩平市恩城街道老旧小区（河北）综合改造项目`（见 `session.v4.jsonl.zstd` 与 `storages\session_projcache`），
+   而那个文件在 `D:\Coding_Plan\商务报价agent\…` —— **在工作区之外**。
+6. **策略对不上**：同一份 session 缓存里 `permissions.sandbox = "danger-full-access"`。
+   而本插件在 rc.2 时代把"写边界"写成"必须在工作区内"：`writable = fs.contains(root, target)`。
+   于是在一个 **平台允许任意写** 的会话里，插件自己把文件判成只读 —— 表现就是"这个不行"。
+
+### 9.3 修法
+
+`resolveTarget()` 现在先取**会话的沙箱策略**，再决定 `writable`：
+
+```
+writable = fs.contains(root, target) || policy.mode === 'danger-full-access'
+```
+
+- `workspace-write`：行为不变（工作区外只读，状态栏写明原因）。
+- `danger-full-access`：工作区外也能编辑，写的时候照旧把同一个 policy 传给 `fs.writeText`，由后端最终裁决。
+- 没有工作区根、只有绝对路径的那种地址，同样按上面规则给 `writable`（以前是恒 `false`）。
+
+顺带纠正了措辞：`sandboxDenied` 的文案原来写"拒绝写入"，但读失败也会落到这个码上，改成"拒绝访问该文件"。
+
+### 9.4 测试
+
+`tests/host.mjs` 里 `sandboxPolicy` 变成可按用例切换的 `policyMode`，新增三条：
+工作区外文件在 `danger-full-access` 下 `open` 可写 → `save` 真的落盘 → 切回 `workspace-write` 再写又被拒。
+（27 → 31 项）

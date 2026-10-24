@@ -49,7 +49,7 @@
 | 视图销毁 / 换文件 | 先把没写的内容写掉，再销毁 |
 | 磁盘被别人改了 | 缓冲区**不动**，顶部横幅给「载入磁盘版本 / 保留我的修改」 |
 | 另一个会话保存了同一文件（`revision` 变化） | 就地合并：内容没变只换版本号；内容变了且你没改过→原地替换（**不重建编辑器**）；你改过→只提示 |
-| 工作区外的文件 | 只读打开（`contenteditable="false"`） |
+| 工作区外的文件 | 看会话的沙箱策略：`danger-full-access` 下**可编辑**；`workspace-write` / `read-only` 下只读打开（`contenteditable="false"`，状态栏写明原因） |
 
 两张保护网值得单独说：
 
@@ -142,5 +142,5 @@ cd ~/.dsh/profiles/desktop; pnpm install
 - **注释/选区批注**：`dsh-quote-annotate-pro` 的划词气泡在本编辑器里不弹，原因在批注插件里——它把落在任何 `contenteditable` 里的选区都当作"在输入框里打字"而隐藏。查证与两行改法见 [docs/STATE.md](docs/STATE.md) 第五节。**代码视图里不要指望它**（CodeMirror 的编辑面同样是 `contenteditable`）。
 - **源码视图不是"无损"的替代品**：它是逃生门。富文本序列化会规范化列表符号、表格对齐、空行，想逐字节保住原样就只能用源码视图改完再保存。
 - **没有跨块/整篇的注释**，也没有删除表格行列的按钮。
-- **代码视图只读范围**：工作区外的文件、沙箱 `read-only`、超过 2 MB 的文件都会被拒绝写（状态栏写明原因）。
+- **代码视图只读范围**：沙箱 `read-only`、`workspace-write` 下工作区外的文件、超过 2 MB 的文件都会被拒绝写（状态栏写明原因）。写边界跟随**会话的沙箱策略**：`danger-full-access` 会话不受工作区限制。
 - **产物体积 2.75 MB**：Milkdown + CodeMirror + 25 个语法全在同一个 classic script 里（无代码分割）。要瘦就删 `languages.js` 里不用的语法条目，别动 `pnpm.overrides`。

@@ -103,9 +103,15 @@ const sessions = {
   },
 };
 
+/**
+ * The session's sandbox mode, switchable per case: the write boundary is the
+ * session's policy, so the tests have to be able to move it.
+ */
+let policyMode = 'workspace-write';
+
 const sandboxPolicy = {
   resolve() {
-    return { mode: 'workspace-write', workspaceRoot: ROOT };
+    return { mode: policyMode, workspaceRoot: ROOT };
   },
 };
 
@@ -219,6 +225,33 @@ const outsideOpen = await call('open', { address: outsideAddress });
 check('a file outside the workspace opens read-only', outsideOpen.ok === true && outsideOpen.writable === false, JSON.stringify(outsideOpen).slice(0, 160));
 const outsideSave = await call('save', { address: outsideAddress, content: 'nope\n', eol: 'lf', bom: false });
 check('a write outside the workspace is refused', outsideSave.ok === false && outsideSave.code === 'outside-workspace', JSON.stringify(outsideSave));
+
+// The same file under a `danger-full-access` session: the platform allows the write,
+// so the editor must not keep pretending the file is read-only. This is the case a
+// user hit when a report sat in a folder outside the conversation's workspace.
+policyMode = 'danger-full-access';
+const outsideUnrestricted = await call('open', { address: outsideAddress });
+check(
+  'an unrestricted session opens an outside file writable',
+  outsideUnrestricted.ok === true && outsideUnrestricted.writable === true,
+  JSON.stringify(outsideUnrestricted).slice(0, 200),
+);
+check('the sandbox block reports the unrestricted mode', outsideUnrestricted.sandbox?.mode === 'danger-full-access', JSON.stringify(outsideUnrestricted.sandbox));
+const outsideWrite = await call('save', {
+  address: outsideAddress,
+  content: 'edited outside\n',
+  baseVersion: outsideUnrestricted.version,
+  eol: 'lf',
+  bom: false,
+});
+check(
+  'the outside write lands while the session is unrestricted',
+  outsideWrite.ok === true && files.get('D:/elsewhere/outside.md').text === 'edited outside\n',
+  JSON.stringify(outsideWrite),
+);
+policyMode = 'workspace-write';
+const outsideAgain = await call('save', { address: outsideAddress, content: 'nope\n', eol: 'lf', bom: false });
+check('the same write is refused again under workspace-write', outsideAgain.ok === false && outsideAgain.code === 'outside-workspace', JSON.stringify(outsideAgain));
 
 // A byte-order mark and CRLF must survive a save that never touched them.
 files.set('D:/workspace/crlf.md', { text: '\uFEFF第一行\r\n第二行\r\n', version: 'v1' });
