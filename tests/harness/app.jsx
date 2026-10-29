@@ -36,6 +36,11 @@ let versionSeq = 0;
 let revision = 0;
 let root;
 let mounted;
+/** The Session the fake right Sidebar says is on screen. */
+const currentSessionId = 'session-test';
+/** The list-slot host currently mounted (the dock tab menu rows). */
+let listRoot;
+let listHost;
 /** The address currently rendered, so a revision bump can re-render it. */
 let currentAddress;
 /** Which renderer is currently mounted: the rich text view or the code surface. */
@@ -169,15 +174,42 @@ globalThis.fetch = async (input, init) => {
  * @param implId - which renderer: its `documentPreviews` id, also the slot key.
  */
 function renderBody(address, implId = 'dsh-sidebar-editor') {
-  const component = components.get(implId);
+  const component = components.get(`sidebar.right.tab.document::${implId}`);
   if (component === undefined) throw new Error(`the plugin registered no body for ${implId}`);
   currentAddress = address;
   currentImpl = implId;
   root.render(createElement(component, propsFor(address)));
 }
 
+/**
+ * Fake `ctx.sidebarRight`: what a bulk close reads and the tab ids it closes.
+ *
+ * The real service is the product's own; only the four members this plugin touches
+ * are reproduced, with the same shapes (`mounted` and `openTabs` are snapshot stores,
+ * `tabsIn` returns committed records, `close` takes one id).
+ */
+let tabsState = [];
+const closedTabs = [];
+const fakeSidebarRight = {
+  mounted: { getSnapshot: () => currentSessionId },
+  openTabs: {
+    getSnapshot: () => tabsState.map((tab) => ({ sessionId: currentSessionId, tabId: tab.id, kind: tab.kind ?? 'document' })),
+  },
+  tabsIn(sessionId) {
+    return sessionId === currentSessionId ? tabsState.map((tab) => ({ ...tab })) : [];
+  },
+  close(tabId) {
+    closedTabs.push(tabId);
+  },
+};
+
 /** The fake client context. */
 const ctx = {
+  sidebarRight: fakeSidebarRight,
+  get(name) {
+    if (name === 'sidebarRight') return fakeSidebarRight;
+    return undefined;
+  },
   effect(fn) {
     const disposer = fn();
     return typeof disposer === 'function' ? disposer : () => {};
@@ -200,9 +232,14 @@ const ctx = {
     inject(_name, fn) {
       return ctx.effect(fn);
     },
-    register({ key }, component) {
-      components.set(key, component);
-      return () => components.delete(key);
+    // Keyed bodies register with `key`, list items with `id`; one map keyed by both
+    // the slot name and that identity keeps them apart.
+    register({ name, key, id }, component) {
+      const slotName = name ?? 'sidebar.right.tab.document';
+      const identity = key ?? id;
+      const mapKey = `${slotName}::${identity}`;
+      components.set(mapKey, component);
+      return () => components.delete(mapKey);
     },
   },
   documentPreviews: {
@@ -287,6 +324,69 @@ window.__test = {
   codeEditable() {
     const content = document.querySelector('.dsh-src-host .cm-content');
     return content === null ? null : content.getAttribute('contenteditable');
+  },
+  /**
+   * Declare which tabs the fake right Sidebar has open for the on-screen Session.
+   * @param tabs - `[{ id, kind? }]`.
+   */
+  setTabs(tabs) {
+    tabsState = (Array.isArray(tabs) ? tabs : []).map((tab, index) => ({
+      id: typeof tab?.id === 'string' ? tab.id : `tab-${index}`,
+      kind: tab?.kind ?? 'document',
+    }));
+    closedTabs.length = 0;
+    return tabsState.length;
+  },
+  /** Tab ids the plugin asked the fake service to close, in order. */
+  closedTabs() {
+    return [...closedTabs];
+  },
+  /** Whether the last menu row called the slot's `dismiss`. */
+  menuDismissed() {
+    return window.__dismissed === true;
+  },
+  /**
+   * Mount one registered list-slot item (the dock tab menu rows) on its own host.
+   * @param slotName - the slot the item was registered into.
+   * @param id - the item's registration id.
+   * @param props - the props the suite would pass (`tab`, `dismiss`).
+   * @returns `true` when the plugin had registered something there.
+   */
+  mountListItem(slotName, id, props) {
+    const component = components.get(`${slotName}::${id}`);
+    if (component === undefined) return false;
+    window.__dismissed = false;
+    if (listHost === undefined) {
+      listHost = document.createElement('div');
+      document.body.append(listHost);
+      listRoot = createRoot(listHost);
+    }
+    // The real slot runtime injects a translator for a registration that declares a
+    // locale namespace, so the fake has to as well or the rows render raw keys.
+    listRoot.render(createElement(component, { t: localeBinder, ...props }));
+    return true;
+  },
+  /** Unmount the list-slot host. */
+  unmountListItem() {
+    if (listRoot !== undefined) {
+      listRoot.unmount();
+      listRoot = undefined;
+    }
+    if (listHost !== undefined) {
+      listHost.remove();
+      listHost = undefined;
+    }
+  },
+  /** The menu rows currently rendered, as text. */
+  menuRowLabels() {
+    return [...document.querySelectorAll('.dsh-se-tab-menu-item')].map((node) => node.textContent);
+  },
+  /** Click one menu row by its label text. */
+  clickMenuRow(label) {
+    const row = [...document.querySelectorAll('.dsh-se-tab-menu-item')].find((node) => node.textContent === label);
+    if (row === undefined) return false;
+    row.click();
+    return true;
   },
   /** The current owner revision, for diagnostics. */
   revisionValue() {

@@ -903,6 +903,69 @@ const teardownCode = await page.evaluate(() => window.__test.codeText() ?? '');
 check('switching views flushes the unsaved rich text buffer', afterTeardown.includes('未保存尾字'), afterTeardown.slice(-40));
 check('the code view read the flushed bytes', teardownCode.includes('未保存尾字'), teardownCode.slice(-40));
 
+// ── 12. dock tab context menu: bulk close ───────────────────────────────────
+// The right sidebar's tab menu belongs to dockkit: it renders the kit's own "close
+// this tab" plus whatever `sidebar.right.tab.menu.item` contributes. The rows below
+// are that contribution, so the whole feature is asserted through the slot the
+// product actually reads.
+console.log('tab menu');
+const MENU_SLOT = 'sidebar.right.tab.menu.item';
+const MENU_ID = 'dsh-sidebar-editor-close-tabs';
+const mountMenu = (tabs, opened) =>
+  page.evaluate(
+    ([slot, id, all, tabId]) => {
+      window.__test.setTabs(all.map((one) => ({ id: one })));
+      return window.__test.mountListItem(slot, id, {
+        tab: { id: tabId },
+        dismiss: () => {
+          window.__dismissed = true;
+        },
+      });
+    },
+    [MENU_SLOT, MENU_ID, tabs, opened],
+  );
+
+const menuRegistered = await mountMenu(['tab-a', 'tab-b', 'tab-c'], 'tab-b');
+check('the plugin registers rows in the tab menu slot', menuRegistered === true);
+await page.waitForTimeout(150);
+const menuLabels = await page.evaluate(() => window.__test.menuRowLabels());
+check(
+  'the menu offers closing the others and closing all',
+  JSON.stringify(menuLabels) === JSON.stringify(['关闭其他标签', '关闭全部标签']),
+  JSON.stringify(menuLabels),
+);
+const menuRoles = await page.evaluate(() =>
+  [...document.querySelectorAll('.dsh-se-tab-menu-item')].map((node) => node.getAttribute('role')),
+);
+check('the rows are menu items', menuRoles.length === 2 && menuRoles.every((role) => role === 'menuitem'), JSON.stringify(menuRoles));
+
+const clickedOthers = await page.evaluate(() => window.__test.clickMenuRow('关闭其他标签'));
+await page.waitForTimeout(150);
+const afterOthers = await page.evaluate(() => ({ closed: window.__test.closedTabs(), dismissed: window.__test.menuDismissed() }));
+check(
+  'closing the others spares the tab the menu was opened on',
+  clickedOthers === true && JSON.stringify(afterOthers.closed) === JSON.stringify(['tab-a', 'tab-c']),
+  JSON.stringify(afterOthers),
+);
+check('the menu dismisses itself after acting', afterOthers.dismissed === true);
+
+await mountMenu(['tab-a', 'tab-b', 'tab-c'], 'tab-b');
+await page.waitForTimeout(150);
+const clickedAll = await page.evaluate(() => window.__test.clickMenuRow('关闭全部标签'));
+await page.waitForTimeout(150);
+const afterAll = await page.evaluate(() => window.__test.closedTabs());
+check(
+  'closing all closes every tab of the session',
+  clickedAll === true && JSON.stringify(afterAll) === JSON.stringify(['tab-a', 'tab-b', 'tab-c']),
+  JSON.stringify(afterAll),
+);
+
+await mountMenu(['tab-solo'], 'tab-solo');
+await page.waitForTimeout(150);
+const soloLabels = await page.evaluate(() => window.__test.menuRowLabels());
+check('a lone tab gets no bulk-close rows', soloLabels.length === 0, JSON.stringify(soloLabels));
+await page.evaluate(() => window.__test.unmountListItem());
+
 // ── screenshots for the visual check ────────────────────────────────────────
 const shots = join(root, 'tests', 'shots');
 mkdirSync(shots, { recursive: true });

@@ -8,10 +8,10 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 1.1.0（**两个视图**：富文本 + 源码；1.1.0 = 可选的全盘可写模式 `fileAccess: full`） |
-| 产物 | `lib/client.js` 2756.3 KB（171 个打包包） |
+| 版本 | 1.2.0（**两个视图**：富文本 + 源码；1.2.0 = 标签右键菜单可批量关闭） |
+| 产物 | `lib/client.js` 2760.3 KB（171 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
-| 测试 | `pnpm test`：宿主半 34 项 + 打包契约 11 项 + 行为 150 项，全绿 |
+| 测试 | `pnpm test`：宿主半 34 项 + 打包契约 11 项 + 行为 157 项，全绿 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`（`link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor`），`bundles` 里只有本插件 |
 | 仓库 | https://github.com/DoggyHU/dsh-sidebar-editor （public，tag `v0.1.0` / `v0.2.0` / `v0.2.1` / `v0.2.2` / `v0.3.0` / `v1.0.0`） |
 | 回退 | 想要回 0.2.2 的单一富文本视图：`git checkout v0.2.2 -- src lib && pnpm build`；0.3.0 的"三个条目、两视图"是 `v0.3.0`；改名前的磁盘快照在 `_backup\dsh-sidebar-milkdown-0.2.2-20261022` |
@@ -425,3 +425,46 @@ writable = fs.contains(root, target) || policy.mode === 'danger-full-access'
 `tests/host.mjs` 末尾新增一组（31 → 34 项）：以 `{ fileAccess: 'full' }` 重新 `apply`，
 在 `workspace-write` 会话下打开工作区外文件 → `writable === true`、`sandbox.mode === 'danger-full-access'`、`save` 真的落盘。
 默认模式的那几条断言在前面，不受影响。
+
+---
+
+## 十一、1.2.0：右键菜单里的"关闭全部/其他标签"
+
+### 11.1 需求与探针结论
+
+用户要"关闭侧边栏的所有标签"。探针（DSH 0.2.1-rc.3）结论：
+
+| 问题 | 结论 |
+|---|---|
+| 官方有批量关闭吗 | **没有**。`ISidebarRight` 只有 `close(tabId)`；dockkit 的 `TabMenu` 只画自家「关闭」一项；语言包只有 `dock.closeTab` |
+| 有扩展点吗 | 有：`sidebar.right.tab.menu.item`，session 作用域 list 槽，`TabMenu` 把它当 `extras` 画在「关闭」之后，props 是 `{ tab, dismiss }`。全 app 扫描：**此前没有任何内置插件注册进去** |
+| 怎么编程式关闭 | `ctx.sidebarRight`（`reflect.provide("sidebarRight", controller)`）：`mounted`（当前会话 snapshot）、`tabsIn(sessionId)`（该会话的 TabRecord[]）、`openTabs`（跨会话公开清单）、`close(tabId)` |
+| 样式怎么对 | dockkit 的 `.menuItem` 在自己的 CSS module 里（插件 import 不到），按 `dockkit.module.css` 抄：`padding 4px 7px`、字号 `calc(var(--dsh-content-font-size-secondary,13px) - 1px)`、圆角 `--dsw-radius-md`、hover `--dsw-alias-interactive-bg-hover` |
+| 菜单显示条件 | dockkit 的菜单**没有 menuitem 就不显示**，所以补的两行必须是真 `<button role="menuitem">` |
+
+### 11.2 实现
+
+`src/client/CloseTabItems.jsx`：渲染两行（关闭其他 / 关闭全部），数据来自服务：
+
+- 会话 id：`sidebarRight.mounted.getSnapshot()`；
+- 标签列表：优先 `tabsIn(sessionId)`，形状不符时退回公开的 `openTabs.getSnapshot()` 并按 `sessionId` 过滤；
+- 关闭：先 `dismiss()` 再逐个 `close(id)`（行和菜单一起卸载，避免在已卸载节点上 setState）；每个 close 包 try/catch。
+- 只有 <2 个标签时返回 `null`（没得批量关，单个用官方那项）。
+- 服务**延迟读取**（`getSidebarRight`）：它属于另一个插件，丢了只该退化成"没有这两行"，不该把本插件的注册一起停掉。
+
+`src/client/index.js`：`ctx.slots.inject('sidebar.right.tab.menu.item', …)` 注册，id `dsh-sidebar-editor-close-tabs`，`locale: NS`（槽运行时因此注入 `t`）。文案 `closeAllTabs` / `closeOtherTabs` 进中英字典。
+
+`src/client/theme.js`：`.dsh-se-tab-menu-item` 及 hover/active，复刻 dockkit 的行样式。
+
+### 11.3 行为细节（官方规则，不是我们的选择）
+
+- 关掉会话的最后一个标签会让右侧栏**整列收起**（文档：显式关闭最后一个 tab 会连同整列一起收起，布局留空，下次展开播种默认页）；
+- 引导页作为唯一停靠标签时不可关闭（我们的循环对它 no-op）；
+- 浮窗里的标签同样计入并一起关闭；
+- 布局持久化在 `dsh.sidebar-right.v1.<sessionId>`，所以关完重启还是空的。
+
+### 11.4 测试
+
+- 测试基建：harness 的 `slots.register` 改成按 `${slot}::${key|id}` 存组件（keyed 正文和 list 项共用一张表）；新增假 `ctx.sidebarRight`（`mounted`/`tabsIn`/`openTabs`/`close`）与 `mountListItem` 辅助；list 项渲染时补 `t`（真槽运行时会注入）。
+- 新增 7 条（150 → 157）：槽里有注册、两行文案、role=menuitem、点"关闭其他"不误关右键那个、菜单自行 dismiss、点"关闭全部"关全部、只有一个标签时不出这两行。
+- 宿主半/打包契约不变（34 + 11）。

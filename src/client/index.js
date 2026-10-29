@@ -39,6 +39,7 @@
  */
 import { createElement } from 'react';
 import { BodyBoundary } from './BodyBoundary.jsx';
+import { CloseTabItems } from './CloseTabItems.jsx';
 import { MilkdownBody } from './MilkdownBody.jsx';
 import { SourceBody } from './codemirror/SourceBody.jsx';
 import { PRODUCT_RENDERED_EXTENSIONS, SOURCE_EXTENSIONS } from './codemirror/claims.js';
@@ -80,6 +81,8 @@ const DICTIONARIES = {
     title: '富文本编辑器',
     codeTitle: '源代码',
     linesUnit: '行',
+    closeAllTabs: '关闭全部标签',
+    closeOtherTabs: '关闭其他标签',
     loading: '读取中…',
     saving: '保存中…',
     saved: '已保存',
@@ -120,6 +123,8 @@ const DICTIONARIES = {
     title: 'Rich editor',
     codeTitle: 'Source',
     linesUnit: 'lines',
+    closeAllTabs: 'Close all tabs',
+    closeOtherTabs: 'Close other tabs',
     loading: 'Loading…',
     saving: 'Saving…',
     saved: 'Saved',
@@ -361,6 +366,26 @@ export function apply(ctx) {
         ),
       ),
     'dsh-sidebar-editor: code renderer body (shipped band)',
+  );
+
+  // Bulk close for the right sidebar's dock tabs: two rows appended to a tab's
+  // context menu. `sidebar.right.tab.menu.item` is a session-scoped list slot, so the
+  // rows ride the product's own menu instead of adding chrome of our own, and
+  // `close(tabId)` goes through the same path as the chip's close button.
+  //
+  // The service is read lazily: it belongs to another plugin, and losing it must
+  // degrade to "no extra rows" rather than parking this plugin's registration.
+  const readSidebarRight = () =>
+    ctx.sidebarRight ?? (typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined);
+  ctx.effect(
+    () =>
+      ctx.slots.inject('sidebar.right.tab.menu.item', () =>
+        ctx.slots.register(
+          { name: 'sidebar.right.tab.menu.item', id: 'dsh-sidebar-editor-close-tabs', locale: NS },
+          (props) => createElement(CloseTabItems, { ...props, getSidebarRight: readSidebarRight }),
+        ),
+      ),
+    'dsh-sidebar-editor: tab menu items',
   );
 
   void Promise.resolve().then(() => reportToHost(ctx));

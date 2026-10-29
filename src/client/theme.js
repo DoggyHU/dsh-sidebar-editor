@@ -295,6 +295,19 @@ const CHROME = `
   .dsh-se-button:active { background: var(--dsh-se-active); }
   .dsh-se-button:disabled { opacity: 0.45; cursor: default; background: transparent; }
 
+  /* Rows this plugin appends to the dock tab's context menu. dockkit's own menu item
+     class lives in its CSS module and cannot be imported, so the look is reproduced
+     here to match it: same padding, type size, radius and hover fill. */
+  .dsh-se-tab-menu-item {
+    padding: 4px 7px; width: 100%; text-align: left; background: transparent;
+    color: var(--dsw-alias-label-primary, #1f2328);
+    font-family: var(--dsw-font-family, inherit);
+    font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+    border: none; border-radius: var(--dsw-radius-md, 6px); cursor: pointer;
+  }
+  .dsh-se-tab-menu-item:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(31, 35, 40, 0.06)); }
+  .dsh-se-tab-menu-item:active { background: var(--dsw-alias-interactive-bg-active, rgba(31, 35, 40, 0.1)); }
+
   /* The table affordance: ＋行 / ＋列, positioned over the table it belongs to. */
   .dsh-se-table-tools {
     position: absolute; z-index: 5; display: flex; gap: 2px; padding: 2px;
