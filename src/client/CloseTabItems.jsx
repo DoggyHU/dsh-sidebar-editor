@@ -37,6 +37,27 @@ const ROW = {
 };
 
 /**
+ * How many times this component may report why it rendered nothing.
+ *
+ * The tab menu opens on every right-click, so an unbounded log line would grow with
+ * use. A handful of samples is enough to tell "service missing" from "slot never
+ * reached us" from "only one tab".
+ */
+const REPORT_LIMIT = 8;
+let reportsSent = 0;
+
+/**
+ * Report one diagnostic sample, if there is budget left.
+ * @param report - the host `diag` sender, when the plugin passed one.
+ * @param payload - the sample.
+ */
+function sample(report, payload) {
+  if (typeof report !== 'function' || reportsSent >= REPORT_LIMIT) return;
+  reportsSent += 1;
+  report(payload);
+}
+
+/**
  * The tabs of one Session that may be closed.
  * @param sidebarRight - the `ctx.sidebarRight` service, when it exists.
  * @param sessionId - the Session on screen.
@@ -73,7 +94,19 @@ export function CloseTabItems(props) {
   const sessionId = sidebarRight?.mounted?.getSnapshot?.();
   const tabs = closableTabs(sidebarRight, sessionId);
   // A single tab has nothing to batch-close: the kit's own item already closes it.
-  if (sidebarRight === undefined || tabs.length < 2) return null;
+  // Either way the reason is reported once, because "the rows are missing" is
+  // otherwise indistinguishable from "the slot never rendered us".
+  if (sidebarRight === undefined || tabs.length < 2) {
+    sample(props.report, {
+      kind: 'tab-menu',
+      stage: 'render',
+      skipped: sidebarRight === undefined ? 'no-service' : 'too-few-tabs',
+      tabs: tabs.length,
+      sessionId: typeof sessionId === 'string' ? 'present' : 'missing',
+    });
+    return null;
+  }
+  sample(props.report, { kind: 'tab-menu', stage: 'render', rendered: 2, tabs: tabs.length });
 
   /**
    * Close every tab but `keep` (and, with `keep === undefined`, every tab).

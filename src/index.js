@@ -38,7 +38,7 @@ import { basename, join } from 'node:path';
 /** Exact Fetch routes this plugin owns; each must sit under `/api`. */
 const ROUTE_PREFIX = '/api/dsh-sidebar-editor';
 /** Plugin version, mirrored into `ping` so the browser half can report it. */
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 /** Where the browser half's self-check lands, so a developer can read it from disk. */
 const REPORT_PATH =
   process.env.DSH_SIDEBAR_EDITOR_REPORT ?? join(tmpdir(), 'dsh-sidebar-editor-report.json');

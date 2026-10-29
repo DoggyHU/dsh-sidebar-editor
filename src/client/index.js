@@ -373,18 +373,48 @@ export function apply(ctx) {
   // rows ride the product's own menu instead of adding chrome of our own, and
   // `close(tabId)` goes through the same path as the chip's close button.
   //
-  // The service is read lazily: it belongs to another plugin, and losing it must
-  // degrade to "no extra rows" rather than parking this plugin's registration.
-  const readSidebarRight = () =>
-    ctx.sidebarRight ?? (typeof ctx.get === 'function' ? ctx.get('sidebarRight') : undefined);
+  // A dynamic client package receives a whitelisting facade: *property* access to a
+  // service is gated by this plugin's `inject` declaration, while `ctx.get(name)` is
+  // the permitted optional lookup. So the service is read through `get` first and the
+  // property is only a fallback — otherwise the rows silently render nothing.
+  const readSidebarRight = () => {
+    try {
+      if (typeof ctx.get === 'function') {
+        const viaGet = ctx.get('sidebarRight');
+        if (viaGet !== undefined && viaGet !== null) return viaGet;
+      }
+    } catch {
+      /* gated or unavailable; fall through to the property */
+    }
+    try {
+      return ctx.sidebarRight;
+    } catch {
+      return undefined;
+    }
+  };
+  const reportDiag = (payload) => {
+    void (async () => {
+      try {
+        await callHost('diag', payload);
+      } catch {
+        /* diagnostics are never load-bearing */
+      }
+    })();
+  };
   ctx.effect(
     () =>
-      ctx.slots.inject('sidebar.right.tab.menu.item', () =>
-        ctx.slots.register(
+      ctx.slots.inject('sidebar.right.tab.menu.item', () => {
+        reportDiag({ kind: 'tab-menu', stage: 'slot-ready' });
+        return ctx.slots.register(
           { name: 'sidebar.right.tab.menu.item', id: 'dsh-sidebar-editor-close-tabs', locale: NS },
-          (props) => createElement(CloseTabItems, { ...props, getSidebarRight: readSidebarRight }),
-        ),
-      ),
+          (props) =>
+            createElement(CloseTabItems, {
+              ...props,
+              getSidebarRight: readSidebarRight,
+              report: reportDiag,
+            }),
+        );
+      }),
     'dsh-sidebar-editor: tab menu items',
   );
 
