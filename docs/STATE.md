@@ -8,8 +8,8 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 1.2.0（**两个视图**：富文本 + 源码；1.2.0 = 标签右键菜单可批量关闭） |
-| 产物 | `lib/client.js` 2760.3 KB（171 个打包包） |
+| 版本 | 1.2.1（**两个视图**：富文本 + 源码；1.2.1 = 标签右键菜单可批量关闭（含服务取用方式的修正）） |
+| 产物 | `lib/client.js` 2761.3 KB（171 个打包包） |
 | 依赖 | `@milkdown/kit` 7.22.3 + CodeMirror 6 一整套（`state`/`view`/`language`/`commands`/`search`/13 个 `lang-*`/`legacy-modes`/`@lezer/highlight`）；`pnpm.overrides` 钉死核心单副本（见第八节坑 A） |
 | 测试 | `pnpm test`：宿主半 34 项 + 打包契约 11 项 + 行为 157 项，全绿 |
 | profile | 已挂进 `~/.dsh/profiles/desktop`（`link:D:/Coding_Plan/DSH_Plugin_insNdev/dsh-sidebar-editor`），`bundles` 里只有本插件 |
@@ -468,3 +468,55 @@ writable = fs.contains(root, target) || policy.mode === 'danger-full-access'
 - 测试基建：harness 的 `slots.register` 改成按 `${slot}::${key|id}` 存组件（keyed 正文和 list 项共用一张表）；新增假 `ctx.sidebarRight`（`mounted`/`tabsIn`/`openTabs`/`close`）与 `mountListItem` 辅助；list 项渲染时补 `t`（真槽运行时会注入）。
 - 新增 7 条（150 → 157）：槽里有注册、两行文案、role=menuitem、点"关闭其他"不误关右键那个、菜单自行 dismiss、点"关闭全部"关全部、只有一个标签时不出这两行。
 - 宿主半/打包契约不变（34 + 11）。
+
+---
+
+## 十二、1.2.1：动态客户端插件的"服务属性访问"要 inject 放行
+
+### 12.1 现场
+
+1.2.0 发出去、用户重启 DSH 后，右键标签**仍然只有官方「关闭」**——菜单出来了，我们的两行被吞掉。
+
+### 12.2 根因
+
+动态加载的客户端插件（profile 里的第三方包都走这条路）拿到的 `ctx` 不是原始 fiber ctx，而是
+`dsh-cordis-client-runner` 里的白名单门面 `dynamicCordisContext`。它自己的注释写着：
+
+> Build the facade one dynamic plugin's `apply` receives (host sandboxContext twin, browser seats).
+> **`ctx.get(name)` performs optional lookup; direct `ctx.serviceName` access is gated by the fiber's `inject` declaration.**
+
+1.2.0 写的是 `ctx.sidebarRight ?? ctx.get('sidebarRight')`——属性优先。属性访问被门面拦下（拿不到），
+于是 `sidebarRight === undefined`，组件直接 `return null`。而 dockkit 的菜单只要
+`onClose !== undefined` 就会显示，所以症状正是"菜单在、两行没了"。
+
+### 12.3 修法
+
+```js
+// 先 ctx.get（可选查找，门面允许），属性访问退成兜底并 try/catch
+const readSidebarRight = () => {
+  try {
+    if (typeof ctx.get === 'function') {
+      const viaGet = ctx.get('sidebarRight');
+      if (viaGet !== undefined && viaGet !== null) return viaGet;
+    }
+  } catch { /* gated */ }
+  try { return ctx.sidebarRight; } catch { return undefined; }
+};
+```
+
+**没有**改 plugin 级 `inject: ['sidebarRight']`：那会让"右侧栏被禁用"顺带停掉整个编辑器，
+代价远大于收益。`ctx.get` 的可选语义正好是我们要的。
+
+### 12.4 诊断（这次加了，以后留着）
+
+菜单项每次渲染都会往 `%TEMP%\dsh-sidebar-editor-host.log` 写一行（最多 8 行）：
+
+- `{"kind":"tab-menu","stage":"slot-ready"}` —— 槽注入成功；
+- `{"kind":"tab-menu","stage":"render","rendered":2,"tabs":4}` —— 正常渲染两行；
+- `{"kind":"tab-menu","stage":"render","skipped":"no-service"}` / `"too-few-tabs"` —— 没渲染及原因。
+
+真机验证：`slot-ready` 一次 → `render rendered:2 tabs:4 / 3 / 2` 三行，与用户操作一致。
+
+### 12.5 测试
+
+宿主半 34 + 打包契约 11 + 行为 157，全绿（本次是取服务方式与诊断，行为断言不变）。

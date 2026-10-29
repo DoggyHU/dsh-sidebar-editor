@@ -174,7 +174,7 @@ cd ~/.dsh/profiles/desktop; pnpm install
 实现只有客户端：`src/client/CloseTabItems.jsx` + 注册到 `sidebar.right.tab.menu.item`（session 作用域的 list 槽，dockkit 的 `TabMenu` 把它的内容画在自家「关闭」之后）。宿主半没有改动，所以**硬刷新即可，不用重启 DSH**。
 
 
-## 已知边界（1.2.0）
+## 已知边界（1.2.1）
 
 - **空段落不保留**：Milkdown 默认把空段落写成 `<br />`，而官方预览不渲染裸 HTML，重开就会看到字面 `<br />`。本插件移除了那个插件，所以空行在保存后消失（空段落没有 Markdown 表示）。
 - **软换行合并**：一段里用软换行折行的两行，解析成一个段落的两行文本；保存后合成一行。这是 Markdown 的本来语义。
